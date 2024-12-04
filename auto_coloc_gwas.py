@@ -50,7 +50,7 @@ def coloc1(
     """
     Compute posterior probabilities for colocalization.
     
-    Parameters:
+    Args:
     trait1_lnbfs: Log-bayes factors (LBFs) for trait 1
     trait2_lnbfs: Log-bayes factors (LBFs) for trait 2
     prior1      : default 1e-4, Prior probability for trait 1
