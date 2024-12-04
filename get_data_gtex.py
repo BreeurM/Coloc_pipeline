@@ -8,21 +8,6 @@ import argparse
 def check_arg(args=None):
     """
     Parse and validate command-line arguments.
-
-    Arguments:
-    -c, --chrom         : Chromosome number (Required)
-    -e, --ensembl       : Ensembl Gene ID (Required)
-    -r, --rsid          : SNP rsid (Required)
-    -p, --plink         : Full path to the PLINK file (Optional)
-    -t, --tissue        : Full path to the GTEx file (allpairs) (Required)
-    -n, --tissue_name   : Tissue name for graph and file output (Required)
-    -ref, --reference   : Path to the directory containing the GTEx reference Map file (Required, must end with /)
-    -d, --dataset       : AGs master dataset (Optional)
-    -g, --gene          : Gene name for graph (Required)
-
-    Returns:
-    A tuple containing parsed arguments in the order:
-    chrom, ensembl, rsid, plink, tissue, tissue_name, reference, dataset, gene.
     """
     parser = argparse.ArgumentParser(
         description='Extract GTEx eQTL information',
