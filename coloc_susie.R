@@ -194,38 +194,40 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
 
 
 
-##' Function extracting the desired windows to colocalise 
+##' Function extracting the desired windows to colocalise
 ##' @param exp_data:        either region to colocalise formatted with TwoSampleMr,
 ##'                         or str - path to exposure data in csv
-##' 
+##'
 ##' @param out_data:        either outcome data formatted with TwoSampleMr
 ##'                         suppose that the extracted snps correspond to exposure snps
 ##'                         or path to outcome data in csv
-##'                         
+##'
 ##' @param window_size:     window_size around SNP of interest, default = 1000kb
 
 extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
   # For now assume exp/out data stored in csv, TO BE CHANGED
-  
+
   if (is.character(exp_data)) {
     exp_data <- read.csv(exp_data)
   }
   if (is.character(out_data)) {
     out_data <- read.csv(out_data)
   }
-  
+
   # Keep region of interest
-  
+
   ## Find set of leading SNPs in exp data
   ## Take all SNPs within window
   ## Exceptions: window too large (exceeds range in the file)
   ##             lead SNPs too distant (find out how to quantify)
-  
+
   extracted_snps <- # list of rsID to keep
-    
-    
+
+
     exp_data <- exp_data %>% filter(SNP %in% extracted_snps)
   out_data <- out_data %>% filter(SNP %in% extracted_snps)
+
+  return(list(exp_data = exp_data, out_data = out_data))
 }
 
 
@@ -238,7 +240,7 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 ##' @param exp_sd:          int - standard deviation of trait if exp_type = "quant"
 ##'                         proportion of cases if exp_type = "cc"
 ##'                         default is 1
-##' 
+##'
 ##' @param out_data:        either outcome data formatted with TwoSampleMr
 ##'                         suppose that the extracted snps correspond to exposure snps
 ##'                         or path to outcome data in csv
@@ -247,7 +249,7 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 ##' @param out_sd:          int - standard deviation of trait if out_type = "quant"
 ##'                         proportion of cases if out_type = "cc"
 ##'                         default is 1
-##' 
+##'
 ##' @param LD_matrix:       either NULL, LD matrix or path to LD matrix
 ##'                         NULL by default. If NULL, LD matrix will be
 ##'                         extracted from 1000G panel using TwoSampleMR
@@ -263,6 +265,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                        outcome_BF_column = NULL,
                        window_size = 1000) {
   # For now assume exp/out data stored in csv, TO BE CHANGED
+  # Check input consistency
 
   if (is.character(exp_data)) {
     exp_data <- read.csv(exp_data)
@@ -311,7 +314,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         se.exposure, se.outcome,
         eaf.exposure, eaf.outcome
       )
-  }else {
+  } else {
     # flipping the harmonised data alleles to match the LD matrix
     LD_alignment <- data.frame(
       SNP = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 1],
@@ -331,7 +334,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
         eaf.outcome = if_else(flipped, 1 - eaf.outcome, eaf.outcome),
       )
-    
+
     if (any(temp$LD_A1 != temp$effect_allele)) {
       stop("Could not flip the alleles to match LD matrix. Check that the allele info provided is correct.")
     }
@@ -344,40 +347,82 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         se.exposure, se.outcome,
         eaf.exposure, eaf.outcome
       )
-    
-    # This may or may not be useful but openGWAS is down so can't test it for now, yay
-    colnames(LD_matrix) <- str_split_fixed(colnames(LD), "_", 2)[, 1]
-    rownames(LD) <- colnames(LD)
-    
-    exp_for_coloc <- harm_region %>% select(beta.exposure.flipped, se.exposure, SNP, eaf.exposure.flipped)
-    exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
-    colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
-    
-    exp_for_coloc <- as.list(exp_for_coloc)
-    exp_for_coloc$type <- exp_type
-    exp_for_coloc$sdY <- 1
-    # exp_dat <- read_csv("N:/EPIC_genetics/For Chibu (DO NOT EDIT)/Clumped_Cis_Trans_Exp_I_II.csv")
-    # exp_for_coloc$N <- as.integer(exp_dat %>% filter(Protein == prot & rsid == snp_dat$SNP) %>% select(N))
-    exp_for_coloc$N <- N_exp
-    
-    check_dataset(exp_for_coloc)
-    
-    
-    # Cancer data
-    out_for_coloc <- harm_region %>% select(beta.outcome.flipped, se.outcome, SNP, eaf.outcome.flipped)
-    out_for_coloc$se.outcome <- out_for_coloc$se.outcome^2
-    colnames(out_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
-    
-    out_for_coloc <- as.list(out_for_coloc)
-    out_for_coloc$type <- out_type
-    out_for_coloc$s <- .6 # Proportion of cases from the PRACTICAL paper
-    out_for_coloc$N <- N_out
-    
-    check_dataset(out_for_coloc)
-    
+  }
+
+  # Format to go into the coloc package
+
+  # This may or may not be useful but openGWAS is down so can't test it for now, yay
+  colnames(LD_matrix) <- str_split_fixed(colnames(LD), "_", 2)[, 1]
+  rownames(LD) <- colnames(LD)
+
+  exp_for_coloc <- harm_region %>% select(beta.exposure.flipped, se.exposure, SNP, eaf.exposure.flipped)
+  exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
+  colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
+
+  exp_for_coloc <- as.list(exp_for_coloc)
+  exp_for_coloc$type <- exp_type
+  if (exp_type == "quant") {
+    exp_for_coloc$sdY <- exp_sd
+  } else {
+    exp_for_coloc$s <- exp_sd
+  }
+  # exp_dat <- read_csv("N:/EPIC_genetics/For Chibu (DO NOT EDIT)/Clumped_Cis_Trans_Exp_I_II.csv")
+  # exp_for_coloc$N <- as.integer(exp_dat %>% filter(Protein == prot & rsid == snp_dat$SNP) %>% select(N))
+  exp_for_coloc$N <- N_exp
+
+  check_dataset(exp_for_coloc)
+
+
+  # Cancer data
+  out_for_coloc <- harm_region %>% select(beta.outcome.flipped, se.outcome, SNP, eaf.outcome.flipped)
+  out_for_coloc$se.outcome <- out_for_coloc$se.outcome^2
+  colnames(out_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
+
+  out_for_coloc <- as.list(out_for_coloc)
+  out_for_coloc$type <- out_type
+  if (out_type == "quant") {
+    out_for_coloc$sdY <- out_sd
+  } else {
+    out_for_coloc$s <- out_sd
+  }
+  out_for_coloc$N <- N_out
+
+  check_dataset(out_for_coloc)
+
+
+  # Head into coloc + SuSiE
+
+  ## Finemapping
+  exp_susie <- tryCatch(
+    expr = {
+      temp <- coloc::runsusie(exp_for_coloc,
+        repeat_until_convergence = F,
+        maxit = 1000
+      )
+    },
+    error = function(e) {
+      message("SuSiE did not converge for exposure")
+      NULL
+    }
+  )
+
+  out_susie <- tryCatch(
+    expr = {
+      temp <- coloc::runsusie(out_for_coloc,
+        repeat_until_convergence = F,
+        maxit = 1000
+      )
+    },
+    error = function(e) {
+      message("SuSiE did not converge for outcome")
+      NULL
+    }
+  )
+  if (!is.null(exp_susie) & !is.null(out_susie)) {
+    susie.res <- coloc::coloc.susie(exp_susie, out_susie)
+  } else {
+    susie.res <- NULL
   }
   
-  # Format to go into the coloc package
-  
-  
+  return(susie.res)
 }
