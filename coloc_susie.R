@@ -194,6 +194,41 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
 
 
 
+##' Function extracting the desired windows to colocalise 
+##' @param exp_data:        either region to colocalise formatted with TwoSampleMr,
+##'                         or str - path to exposure data in csv
+##' 
+##' @param out_data:        either outcome data formatted with TwoSampleMr
+##'                         suppose that the extracted snps correspond to exposure snps
+##'                         or path to outcome data in csv
+##'                         
+##' @param window_size:     window_size around SNP of interest, default = 1000kb
+
+extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
+  # For now assume exp/out data stored in csv, TO BE CHANGED
+  
+  if (is.character(exp_data)) {
+    exp_data <- read.csv(exp_data)
+  }
+  if (is.character(out_data)) {
+    out_data <- read.csv(out_data)
+  }
+  
+  # Keep region of interest
+  
+  ## Find set of leading SNPs in exp data
+  ## Take all SNPs within window
+  ## Exceptions: window too large (exceeds range in the file)
+  ##             lead SNPs too distant (find out how to quantify)
+  
+  extracted_snps <- # list of rsID to keep
+    
+    
+    exp_data <- exp_data %>% filter(SNP %in% extracted_snps)
+  out_data <- out_data %>% filter(SNP %in% extracted_snps)
+}
+
+
 
 ##' Main function performing coloc SuSiE
 ##' @param exp_data:        either region to colocalise formatted with TwoSampleMr,
@@ -202,6 +237,7 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
 ##' @param exp_type:        str - "quant" or "cc"
 ##' @param exp_sd:          int - standard deviation of trait if exp_type = "quant"
 ##'                         proportion of cases if exp_type = "cc"
+##'                         default is 1
 ##' 
 ##' @param out_data:        either outcome data formatted with TwoSampleMr
 ##'                         suppose that the extracted snps correspond to exposure snps
@@ -210,6 +246,7 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
 ##' @param out_type:        str - "quant" or "cc"
 ##' @param out_sd:          int - standard deviation of trait if out_type = "quant"
 ##'                         proportion of cases if out_type = "cc"
+##'                         default is 1
 ##' 
 ##' @param LD_matrix:       either NULL, LD matrix or path to LD matrix
 ##'                         NULL by default. If NULL, LD matrix will be
@@ -218,10 +255,9 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
 ##'                         NULL by default. If NULL, BFs will be computed.
 ##' @param outcome_BF_col:  name of the column containing the Bayes factors in exposure data
 ##'                         NULL by default. If NULL, BFs will be computed.
-##' @param window_size:     window_size around SNP of interest, default = 1000kb
 
-main_coloc <- function(exp_data, N_exp, exp_type,
-                       out_data, N_out, out_type,
+main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
+                       out_data, N_out, out_type, out_sd = 1,
                        LD_matrix = NULL,
                        exposure_BF_column = NULL,
                        outcome_BF_column = NULL,
@@ -234,20 +270,6 @@ main_coloc <- function(exp_data, N_exp, exp_type,
   if (is.character(out_data)) {
     out_data <- read.csv(out_data)
   }
-
-  # Keep region of interest
-  # MIGHT NOT HAVE TO BE IN THIS SCRIPT AT ALL?
-
-  ## Find set of leading SNPs in exp data
-  ## Take all SNPs within window
-  ## Exceptions: window too large (exceeds range in the file)
-  ##             lead SNPs too distant (find out how to quantify)
-
-  extracted_snps <- # list of rsID to keep
-
-
-    exp_data <- exp_data %>% filter(SNP %in% extracted_snps)
-  out_data <- out_data %>% filter(SNP %in% extracted_snps)
 
   harm_data <- harmonise_data(exp_data, out_data)
   if (any(harm_data$effect_allele.exposure != harm_data$effect_allele.outcome) |
