@@ -55,7 +55,12 @@
 #'
 #' Temporary files created during the analysis are automatically cleaned up. If the specified SNP
 #' is not found in the data, the function returns an empty data frame with the same structure as `snp_dat`.
-find_proxy_snps <- function(plink_path = "plink", bfile_prefix = "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3", snp_dat, window_size_kb, outcome_dat, file_list) {
+find_proxy_snps <- function(plink_path = "plink", 
+                            bfile_prefix = "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3", 
+                            snp_dat, 
+                            window_size_kb, 
+                            outcome_dat, 
+                            file_list) {
   # Check if PLINK is installed
   if (system(paste(plink_path, "--version"), ignore.stdout = TRUE) != 0) {
     stop("PLINK not found at the specified path. Please provide the correct path to the PLINK executable.")
