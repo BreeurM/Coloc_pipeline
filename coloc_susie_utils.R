@@ -1,12 +1,35 @@
-rm(list = ls())
+#' SNP Proxy and Colocalisation Analysis Toolkit
+#'
+#' This script provides a suite of functions for genomic analysis, including identifying proxy SNPs,
+#' computing linkage disequilibrium (LD) matrices, extracting genomic regions for colocalisation,
+#' and performing colocalisation analysis using the coloc + SuSiE algorithm. The toolkit leverages PLINK
+#' TwoSampleMR, and coloc for processing of SNP data, LD computation, and colocalisation analysis
+#' 
+#' ## Key Functions:
+#' 1. `find_proxy_snps`: Identifies proxy SNPs within a specified genomic window based on LD thresholds.
+#' 2. `get_ld_matrix`: Computes and formats an LD matrix for a set of SNPs using PLINK.
+#' 3. `extract_regions_for_coloc`: Extracts genomic regions around SNPs for colocalisation analysis.
+#' 4. `main_coloc`: Performs colocalisation analysis using SuSiE and LD fine-mapping.
+#'
+#' ## Requirements:
+#' - PLINK installed and accessible via command line.
+#' - `ieugwasr`, `TwoSampleMR`, and `coloc` R packages.
+#'
+#' ## Notes:
+#' - Input data must be formatted correctly for PLINK and TwoSampleMR.
+#' - Ensure compatibility of allele information across datasets to avoid errors during harmonization.
+#' - Temporary files generated during execution are automatically cleaned up.
+#'
+#' ## Outputs:
+#' - Proxy SNPs for a given target SNP.
+#' - LD matrices for analysis and plotting.
+#' - Colocalisation results with posterior probabilities and fine-mapping outputs.
 
-library(data.table)
-library(tidyverse)
-library(coloc)
-library(susieR)
-library(TwoSampleMR)
 
-setwd("~/Code/Coloc_pipeline")
+
+
+
+
 
 #' Identify Proxy SNPs within a Defined Genomic Window
 #'
@@ -14,12 +37,12 @@ setwd("~/Code/Coloc_pipeline")
 #' genomic window (in kilobases) using PLINK. It calculates linkage disequilibrium (LD)
 #' for the SNPs in the window and selects potential proxies based on a specified LD threshold.
 #'
-#' @param plink_path A string specifying the path to the PLINK executable. Default is `"plink"`.
-#' @param bfile_prefix A string specifying the prefix of the PLINK binary files (.bed, .bim, .fam).
-#' @param snp_dat A data frame containing information about the target SNP. Must include at least the column `SNP`.
+#' @param plink_path     A string specifying the path to the PLINK executable. Default is `"plink"`.
+#' @param bfile_prefix   A string specifying the prefix of the PLINK binary files (.bed, .bim, .fam).
+#' @param snp_dat        A data frame containing information about the target SNP. Must include at least the column `SNP`.
 #' @param window_size_kb An integer specifying the size of the genomic window around the target SNP in kilobases.
-#' @param outcome_dat A data frame containing outcome data for SNPs. Should include at least a `SNP` column.
-#' @param file_list A character vector of file paths containing additional data relevant to the analysis.
+#' @param outcome_dat    A data frame containing outcome data for SNPs. Should include at least a `SNP` column.
+#' @param file_list      A character vector of file paths containing additional data relevant to the analysis.
 #'
 #' @return A data frame containing information about the best proxy SNP for the target SNP,
 #' including annotation and metadata. If no proxies are identified, returns an empty data frame.
@@ -144,9 +167,9 @@ find_proxy_snps <- function(plink_path = "plink", bfile_prefix = "N:/EPIC_geneti
 #' using PLINK and a provided bfile. It also formats the LD matrix and returns it in two forms:
 #' a cleaned matrix for analysis and a data frame for plotting.
 #'
-#' @param rsid_list A character vector of RSIDs for which to compute the LD matrix.
-#' @param plink_loc A string specifying the path to the PLINK binary.
-#' @param bfile_loc A string specifying the path to the PLINK bfile (prefix of binary files).
+#' @param rsid_list    A character vector of RSIDs for which to compute the LD matrix.
+#' @param plink_loc    A string specifying the path to the PLINK binary.
+#' @param bfile_loc    A string specifying the path to the PLINK bfile (prefix of binary files).
 #' @param with_alleles A logical value indicating whether allele information should be included
 #' in the LD matrix. Default is `FALSE`.
 #'
@@ -169,7 +192,8 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
   # Compute the LD matrix using the ieugwasr package
   LD_Full <- ieugwasr::ld_matrix_local(rsid_list,
     bfile = bfile_loc,
-    plink_bin = plink_loc, with_alleles = with_alleles
+    plink_bin = plink_loc, 
+    with_alleles = with_alleles
   )
 
   # Clean up temporary files
@@ -195,14 +219,14 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
 
 
 ##' Function extracting the desired windows to colocalise
-##' @param exp_data:        either region to colocalise formatted with TwoSampleMr,
-##'                         or str - path to exposure data in csv
+##' @param exp_data: either region to colocalise formatted with TwoSampleMr,
+##'                  or str - path to exposure data in csv
 ##'
-##' @param out_data:        either outcome data formatted with TwoSampleMr
-##'                         suppose that the extracted snps correspond to exposure snps
-##'                         or path to outcome data in csv
+##' @param out_data: either outcome data formatted with TwoSampleMr
+##'                  suppose that the extracted snps correspond to exposure snps
+##'                  or path to outcome data in csv
 ##'
-##' @param window_size:     window_size around SNP of interest, default = 1000kb
+##' @param window_size: window_size around SNP of interest, default = 1000kb
 
 extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
   # For now assume exp/out data stored in csv, TO BE CHANGED
@@ -232,51 +256,49 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 
 
 
-##' Main function performing coloc SuSiE
-##' @param exp_data:        either region to colocalise formatted with TwoSampleMr,
-##'                         or str - path to exposure data in csv
-##' @param N_exp:           int - exposure sample size
-##' @param exp_type:        str - "quant" or "cc"
-##' @param exp_sd:          int - standard deviation of trait if exp_type = "quant"
-##'                         proportion of cases if exp_type = "cc"
-##'                         default is 1
-##'
-##' @param out_data:        either outcome data formatted with TwoSampleMr
-##'                         suppose that the extracted snps correspond to exposure snps
-##'                         or path to outcome data in csv
-##' @param N_out:           int - outcome sqmple size
-##' @param out_type:        str - "quant" or "cc"
-##' @param out_sd:          int - standard deviation of trait if out_type = "quant"
-##'                         proportion of cases if out_type = "cc"
-##'                         default is 1
-##'
-##' @param LD_matrix:       either NULL, LD matrix or path to LD matrix
-##'                         NULL by default. If NULL, LD matrix will be
-##'                         extracted from 1000G panel using TwoSampleMR
-##' @param exposure_BF_col: name of the column containing the Bayes factors in exposure data
-##'                         NULL by default. If NULL, BFs will be computed.
-##' @param outcome_BF_col:  name of the column containing the Bayes factors in exposure data
-##'                         NULL by default. If NULL, BFs will be computed.
 
+#' Perform Colocalization Analysis with SuSiE
+#'
+#' This function performs colocalization analysis using the SuSiE method for a given pair of exposure and outcome datasets. 
+#' It computes Bayes factors for each dataset, aligns the SNPs and alleles with an optional LD matrix, and integrates the results using SuSiE.
+#'
+#' @param exp_data Either a data frame or a file path to the exposure dataset. 
+#'                 The dataset must be formatted as required by TwoSampleMR and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
+#' @param N_exp An integer specifying the sample size for the exposure dataset.
+#' @param exp_type A string specifying the type of exposure study. Accepted values are `"quant"` (quantitative trait) or `"cc"` (case-control).
+#' @param exp_sd An optional numeric value specifying the standard deviation of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
+#' @param out_data Either a data frame or a file path to the outcome dataset.
+#'                 The dataset must be formatted as required by TwoSampleMR and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
+#' @param N_out An integer specifying the sample size for the outcome dataset.
+#' @param out_type A string specifying the type of outcome study. Accepted values are `"quant"` (quantitative trait) or `"cc"` (case-control).
+#' @param out_sd An optional numeric value specifying the standard deviation of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
+#' @param LD_matrix Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix. If `NULL`, the LD matrix is computed using the `get_ld_matrix` function.
+#' @param exposure_BF_column An optional string specifying the column name containing Bayes factors in the exposure dataset. If `NULL`, Bayes factors are computed within the function.
+#' @param outcome_BF_column An optional string specifying the column name containing Bayes factors in the outcome dataset. If `NULL`, Bayes factors are computed within the function.
+#' @param window_size An integer specifying the size of the genomic window (in kilobases) for colocalization. Default is `1000`.
+#'
+#' @return A SuSiE colocalization result object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets. 
+#'         If SuSiE fails to converge for either dataset, the function returns `NULL`.
 main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                        out_data, N_out, out_type, out_sd = 1,
                        LD_matrix = NULL,
                        exposure_BF_column = NULL,
                        outcome_BF_column = NULL,
                        window_size = 1000) {
-  # For now assume exp/out data stored in csv, TO BE CHANGED
   # Check input consistency
-
+  
+  # Import exposure and outcome data if provided as file paths
   if (is.character(exp_data)) {
     exp_data <- read.csv(exp_data)
   }
   if (is.character(out_data)) {
     out_data <- read.csv(out_data)
   }
-
+  
+  # Harmonise the exposure and outcome data to ensure consistent SNP and allele representation
   harm_data <- harmonise_data(exp_data, out_data)
   if (any(harm_data$effect_allele.exposure != harm_data$effect_allele.outcome) |
-    any(harm_data$other_allele.exposure != harm_data$other_allele.outcome)) {
+      any(harm_data$other_allele.exposure != harm_data$other_allele.outcome)) {
     stop("Inconsistent effect alleles for exposure and outcome after harmonisation.")
   }
   harm_data <- harm_data %>%
@@ -290,11 +312,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       effect_allele.outcome,
       other_allele.outcome
     ))
-
-  # Flip alleles based on LD matrix
-
-  ## import LD matrix if not provided
-
+  
+  # Import LD_matrix if provided as file paths, or import from 1000G if NULL
   if (is.null(LD_matrix)) {
     LD_matrix <- get_ld_matrix(harm_region$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
   } else {
@@ -302,9 +321,11 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       LD_matrix <- read.csv(LD_matrix)
     }
   }
-
+  
+  # Check for allele information in the LD matrix, and align if possible
   if (all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
-    all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
+      all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
+    # SNP names in the LD_matrix do not contain allele information, or their format is wrong
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Zscores VS observed Zscores")
     harm_data <- harm_data %>%
       mutate(pos = pos.exposure) %>%
@@ -315,15 +336,13 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         eaf.exposure, eaf.outcome
       )
   } else {
-    # flipping the harmonised data alleles to match the LD matrix
+    # Flip alleles in harmonised data to align with LD matrix
     LD_alignment <- data.frame(
       SNP = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 1],
       LD_A1 = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 2],
       LD_A2 = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 3]
     )
-
     temp <- merge(harm_data, LD_alignment)
-
     temp <- temp %>%
       mutate(
         flipped = effect_allele != LD_A1,
@@ -332,13 +351,14 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
         beta.outcome = if_else(flipped, -beta.outcome, beta.outcome),
         eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
-        eaf.outcome = if_else(flipped, 1 - eaf.outcome, eaf.outcome),
+        eaf.outcome = if_else(flipped, 1 - eaf.outcome, eaf.outcome)
       )
-
+    
     if (any(temp$LD_A1 != temp$effect_allele)) {
+      # Mismatched alleles after the flip, LD alleles and data alleles do not correspond
       stop("Could not flip the alleles to match LD matrix. Check that the allele info provided is correct.")
     }
-
+    
     harm_data <- temp %>%
       mutate(pos = pos.exposure) %>%
       select(
@@ -348,17 +368,22 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         eaf.exposure, eaf.outcome
       )
   }
-
-  # Format to go into the coloc package
-
+  
+  # Prepare data for SuSiE colocalization analysis
+  
   # This may or may not be useful but openGWAS is down so can't test it for now, yay
   colnames(LD_matrix) <- str_split_fixed(colnames(LD), "_", 2)[, 1]
   rownames(LD) <- colnames(LD)
-
-  exp_for_coloc <- harm_region %>% select(beta.exposure.flipped, se.exposure, SNP, eaf.exposure.flipped)
+  
+  exp_for_coloc <- harm_region %>%
+    select(
+      beta.exposure,
+      se.exposure,
+      SNP,
+      eaf.exposure
+    )
   exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
   colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
-
   exp_for_coloc <- as.list(exp_for_coloc)
   exp_for_coloc$type <- exp_type
   if (exp_type == "quant") {
@@ -366,18 +391,18 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   } else {
     exp_for_coloc$s <- exp_sd
   }
-  # exp_dat <- read_csv("N:/EPIC_genetics/For Chibu (DO NOT EDIT)/Clumped_Cis_Trans_Exp_I_II.csv")
-  # exp_for_coloc$N <- as.integer(exp_dat %>% filter(Protein == prot & rsid == snp_dat$SNP) %>% select(N))
   exp_for_coloc$N <- N_exp
-
-  check_dataset(exp_for_coloc)
-
-
-  # Cancer data
-  out_for_coloc <- harm_region %>% select(beta.outcome.flipped, se.outcome, SNP, eaf.outcome.flipped)
+  
+  
+  out_for_coloc <- harm_region %>%
+    select(
+      beta.outcome,
+      se.outcome,
+      SNP,
+      eaf.outcome
+    )
   out_for_coloc$se.outcome <- out_for_coloc$se.outcome^2
   colnames(out_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
-
   out_for_coloc <- as.list(out_for_coloc)
   out_for_coloc$type <- out_type
   if (out_type == "quant") {
@@ -386,43 +411,42 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     out_for_coloc$s <- out_sd
   }
   out_for_coloc$N <- N_out
-
-  check_dataset(out_for_coloc)
-
-
-  # Head into coloc + SuSiE
-
-  ## Finemapping
+  
+  
+  # Run SuSiE for fine-mapping and colocalization
   exp_susie <- tryCatch(
     expr = {
       temp <- coloc::runsusie(exp_for_coloc,
-        repeat_until_convergence = F,
-        maxit = 1000
+                              repeat_until_convergence = F,
+                              maxit = 1000
       )
     },
     error = function(e) {
-      message("SuSiE did not converge for exposure")
+      warning("SuSiE did not converge for exposure")
       NULL
     }
   )
-
+  
   out_susie <- tryCatch(
     expr = {
       temp <- coloc::runsusie(out_for_coloc,
-        repeat_until_convergence = F,
-        maxit = 1000
+                              repeat_until_convergence = F,
+                              maxit = 1000
       )
     },
     error = function(e) {
-      message("SuSiE did not converge for outcome")
+      warning("SuSiE did not converge for outcome")
       NULL
     }
   )
   if (!is.null(exp_susie) & !is.null(out_susie)) {
     susie.res <- coloc::coloc.susie(exp_susie, out_susie)
   } else {
+    warning("Returning NULL SuSiE object")
     susie.res <- NULL
   }
   
-  return(susie.res)
+  return(list(susie.res = susie.res,
+              exp_susie = exp_susie,
+              out_susie = out_susie))
 }
