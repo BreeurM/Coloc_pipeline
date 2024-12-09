@@ -6,36 +6,356 @@ library(coloc)
 library(susieR)
 library(TwoSampleMR)
 
+setwd("~/Code/Coloc_pipeline")
 
-##' Input: 
-##' @param path_to_exposure:  path to exposure data, formatted with TwoSampleMr, 
-##'                           file type tbd
-##' @param path_to_outcome:   path to outcome data, formatted with TwoSampleMr, 
-##'                           file type tbd
-##' @param path_to_LD_matrix: file type tbd, NULL by default. If NULL, LD matrix will be
-##'                           extracted from 1000G panel using TwoSampleMR
-##' @param exposure_BF_col:   name of the column containing the Bayes factors in exposure data
-##'                           NULL by default. If NULL, BFs will be computed.
-##' @param outcome_BF_col:    name of the column containing the Bayes factors in exposure data
-##'                           NULL by default. If NULL, BFs will be computed.
-##' @param window_size:       window_size around SNP of interest, default = 1000kb
+#' Identify Proxy SNPs within a Defined Genomic Window
+#'
+#' This function identifies proxy SNPs for a given target SNP within a specified
+#' genomic window (in kilobases) using PLINK. It calculates linkage disequilibrium (LD)
+#' for the SNPs in the window and selects potential proxies based on a specified LD threshold.
+#'
+#' @param plink_path A string specifying the path to the PLINK executable. Default is `"plink"`.
+#' @param bfile_prefix A string specifying the prefix of the PLINK binary files (.bed, .bim, .fam).
+#' @param snp_dat A data frame containing information about the target SNP. Must include at least the column `SNP`.
+#' @param window_size_kb An integer specifying the size of the genomic window around the target SNP in kilobases.
+#' @param outcome_dat A data frame containing outcome data for SNPs. Should include at least a `SNP` column.
+#' @param file_list A character vector of file paths containing additional data relevant to the analysis.
+#'
+#' @return A data frame containing information about the best proxy SNP for the target SNP,
+#' including annotation and metadata. If no proxies are identified, returns an empty data frame.
+#'
+#' @details
+#' The function uses PLINK to extract SNPs within the specified genomic window around the target SNP.
+#' It computes the LD matrix using the `get_ld_matrix` function and filters SNPs with an LD value
+#' greater than 0.8. Additional filters are applied to match SNPs against the provided outcome
+#' and exposure datasets. The best proxy SNP is selected based on the highest LD value.
+#'
+#' Temporary files created during the analysis are automatically cleaned up. If the specified SNP
+#' is not found in the data, the function returns an empty data frame with the same structure as `snp_dat`.
+find_proxy_snps <- function(plink_path = "plink", bfile_prefix = "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3", snp_dat, window_size_kb, outcome_dat, file_list) {
+  # Check if PLINK is installed
+  if (system(paste(plink_path, "--version"), ignore.stdout = TRUE) != 0) {
+    stop("PLINK not found at the specified path. Please provide the correct path to the PLINK executable.")
+  }
 
-main <- function(path_to_exposure,
-                 path_to_outcome,
-                 path_to_LD_matrix = NULL,
-                 exposure_BF_column = NULL,
-                 outcome_BF_column = NULL,
-                 window_size = 1000){
+  cat("Extracting SNPs in a", window_size_kb, "kb window around", snp_dat$SNP, "\n")
+
+  # Execute PLINK command
+  extracted_snps_file <- tempfile("extracted_snps", fileext = ".txt")
+  cmd <- paste(
+    plink_path, "--bfile", bfile_prefix,
+    "--snp", snp_dat$SNP,
+    "--window", window_size_kb,
+    "--write-snplist",
+    "--out", extracted_snps_file,
+    "--allow-no-sex"
+  )
+
+  # Run the command and capture both stdout and stderr
+  system(cmd, intern = TRUE, ignore.stderr = FALSE)
+
+  # Read extracted SNPs list with tryCatch
+  extracted_snps <- tryCatch(
+    {
+      read.table(paste(extracted_snps_file, ".snplist", sep = ""), header = FALSE, col.names = "SNP")
+    },
+    error = function(e) {
+      message("An error occurred while reading the extracted SNPs file. Returning an empty data.frame.")
+      data.frame()
+    }
+  )
+
+  if (dim(extracted_snps)[1] > 0) {
+    cat("Extracted", dim(extracted_snps)[1], "SNPs around", snp_dat$SNP, "\n")
+
+    # Compute LD matrix
+    LD_Return <- get_ld_matrix(extracted_snps$SNP, plink_loc = plink_path, bfile_loc = bfile_prefix)
+    LD_Mat <- as.data.frame(abs(LD_Return$LD_Anal))
+
+    # Identify proxy SNPs
+    LD_Return_index <- tryCatch(
+      expr = {
+        LD_Mat %>%
+          dplyr::select(contains(snp_dat$SNP)) %>%
+          filter_at(1, all_vars(. > 0.8)) %>%
+          mutate(SNP = row.names(.))
+      },
+      error = function(e) {
+        message("Query SNP doesn't pass QC")
+        data.frame()
+      }
+    )
+
+    cat("There are", dim(LD_Return_index)[1], "potential proxy SNPs for", snp_dat$SNP, "\n")
+
+    # Process and filter additional data
+    if (length(paste0(file_list[grepl(snp_dat$SNP, file_list) &
+      grepl(str_replace_all(paste0(snp_dat$gene.exposure, "_"), "-", "-"), file_list)])) > 0) {
+      temp_prot <- TwoSampleMR::read_exposure_data(
+        paste0(file_list[grepl(snp_dat$SNP, file_list) &
+          grepl(str_replace_all(paste0(snp_dat$gene.exposure, "_"), "-", "-"), file_list)]),
+        sep = ",",
+        snp_col = "RSID", beta_col = "BETA", se_col = "SE", log_pval = TRUE, pval_col = "LOG10P",
+        effect_allele_col = "ALLELE1", other_allele_col = "ALLELE0",
+        pos_col = "GENPOS", chr_col = "CHROM", eaf_col = "A1FREQ", min_pval = NA
+      ) %>% filter(SNP %in% LD_Return_index$SNP)
+
+      temp_prot$exposure <- snp_dat$Assay
+      temp_out <- outcome_dat %>% filter(SNP %in% temp_prot$SNP)
+
+      cat("There are", dim(temp_out)[1], "potential proxy SNPs in the outcome data for", snp_dat$SNP, "\n")
+      if (dim(LD_Return_index)[1] > 0) {
+        top_snp <- LD_Return_index %>%
+          filter(SNP %in% temp_out$SNP) %>%
+          arrange(desc(.[[1]])) %>%
+          slice(1) %>%
+          select(SNP) %>%
+          as.character()
+
+        cat(top_snp, "is the proxy SNP for", snp_dat$SNP, "\n")
+
+        new_exp_dat <- temp_prot %>%
+          filter(SNP == top_snp) %>%
+          mutate(
+            gene.exposure = snp_dat$gene.exposure,
+            info.exposure = snp_dat$info.exposure,
+            id.exposure = snp_dat$id.exposure,
+            exposure = snp_dat$exposure,
+            query_snp = snp_dat$SNP
+          ) %>%
+          select(all_of(c(colnames(snp_dat), "query_snp")))
+        return(new_exp_dat)
+      } else {
+        cat("No proxies in our data: ", snp_dat$SNP, "\n")
+        return(data.frame(matrix(ncol = length(colnames(snp_dat)), nrow = 0, dimnames = list(NULL, colnames(snp_dat)))))
+      }
+    }
+  } else {
+    cat("SNP not in our data: ", snp_dat$SNP, "\n")
+    return(data.frame(matrix(ncol = length(colnames(snp_dat)), nrow = 0, dimnames = list(NULL, colnames(snp_dat)))))
+  }
+}
+
+
+
+#' Generate a Linkage Disequilibrium (LD) Matrix
+#'
+#' This function calculates a linkage disequilibrium (LD) matrix for a given list of RSIDs
+#' using PLINK and a provided bfile. It also formats the LD matrix and returns it in two forms:
+#' a cleaned matrix for analysis and a data frame for plotting.
+#'
+#' @param rsid_list A character vector of RSIDs for which to compute the LD matrix.
+#' @param plink_loc A string specifying the path to the PLINK binary.
+#' @param bfile_loc A string specifying the path to the PLINK bfile (prefix of binary files).
+#' @param with_alleles A logical value indicating whether allele information should be included
+#' in the LD matrix. Default is `FALSE`.
+#'
+#' @return A list with two elements:
+#' \itemize{
+#'   \item \code{LD_Anal}: A cleaned LD matrix for analysis, with incomplete rows/columns removed.
+#'   \item \code{LD_Plot}: A data frame version of the LD matrix, including RSIDs for plotting.
+#' }
+#'
+#' @details
+#' This function leverages the `ieugwasr::ld_matrix_local` function to compute the LD matrix
+#' locally using PLINK. Any temporary files created during the computation are cleaned up
+#' after the LD matrix is generated. Columns or rows with excessive missing values are
+#' removed from the analytical matrix, ensuring the returned matrix is complete.
+get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
+  # Set the temporary directory
+  temp_dir <- "Temp_dir/"
+  tempdir(temp_dir)
+
+  # Compute the LD matrix using the ieugwasr package
+  LD_Full <- ieugwasr::ld_matrix_local(rsid_list,
+    bfile = bfile_loc,
+    plink_bin = plink_loc, with_alleles = with_alleles
+  )
+
+  # Clean up temporary files
+  temp_dir <- tempdir()
+  files <- list.files(temp_dir)
+  if (length(files) > 0) {
+    unlink(file.path(temp_dir, files), recursive = TRUE)
+  }
+
+  # Format the LD matrix for analysis
+  LD <- LD_Full[, !colnames(LD_Full) %in% names(which(colSums(is.na(as.matrix(LD_Full))) > dim(LD_Full) - 1))]
+  LD <- LD[complete.cases(LD), ]
+  rownames(LD) <- colnames(LD)
+
+  # Prepare a version for plotting
+  LD_Full <- as.data.frame(LD_Full)
+  LD_Full$RS_number <- rownames(LD)
+
+  # Return the results
+  return(list(LD_Anal = LD, LD_Plot = LD_Full))
+}
+
+
+
+
+##' Main function performing coloc SuSiE
+##' @param exp_data:        either region to colocalise formatted with TwoSampleMr,
+##'                         or str - path to exposure data in csv
+##' @param N_exp:           int - exposure sample size
+##' @param exp_type:        str - "quant" or "cc"
+##' @param exp_sd:          int - standard deviation of trait if exp_type = "quant"
+##'                         proportion of cases if exp_type = "cc"
+##' 
+##' @param out_data:        either outcome data formatted with TwoSampleMr
+##'                         suppose that the extracted snps correspond to exposure snps
+##'                         or path to outcome data in csv
+##' @param N_out:           int - outcome sqmple size
+##' @param out_type:        str - "quant" or "cc"
+##' @param out_sd:          int - standard deviation of trait if out_type = "quant"
+##'                         proportion of cases if out_type = "cc"
+##' 
+##' @param LD_matrix:       either NULL, LD matrix or path to LD matrix
+##'                         NULL by default. If NULL, LD matrix will be
+##'                         extracted from 1000G panel using TwoSampleMR
+##' @param exposure_BF_col: name of the column containing the Bayes factors in exposure data
+##'                         NULL by default. If NULL, BFs will be computed.
+##' @param outcome_BF_col:  name of the column containing the Bayes factors in exposure data
+##'                         NULL by default. If NULL, BFs will be computed.
+##' @param window_size:     window_size around SNP of interest, default = 1000kb
+
+main_coloc <- function(exp_data, N_exp, exp_type,
+                       out_data, N_out, out_type,
+                       LD_matrix = NULL,
+                       exposure_BF_column = NULL,
+                       outcome_BF_column = NULL,
+                       window_size = 1000) {
+  # For now assume exp/out data stored in csv, TO BE CHANGED
+
+  if (is.character(exp_data)) {
+    exp_data <- read.csv(exp_data)
+  }
+  if (is.character(out_data)) {
+    out_data <- read.csv(out_data)
+  }
+
+  # Keep region of interest
+  # MIGHT NOT HAVE TO BE IN THIS SCRIPT AT ALL?
+
+  ## Find set of leading SNPs in exp data
+  ## Take all SNPs within window
+  ## Exceptions: window too large (exceeds range in the file)
+  ##             lead SNPs too distant (find out how to quantify)
+
+  extracted_snps <- # list of rsID to keep
+
+
+    exp_data <- exp_data %>% filter(SNP %in% extracted_snps)
+  out_data <- out_data %>% filter(SNP %in% extracted_snps)
+
+  harm_data <- harmonise_data(exp_data, out_data)
+  if (any(harm_data$effect_allele.exposure != harm_data$effect_allele.outcome) |
+    any(harm_data$other_allele.exposure != harm_data$other_allele.outcome)) {
+    stop("Inconsistent effect alleles for exposure and outcome after harmonisation.")
+  }
+  harm_data <- harm_data %>%
+    mutate(
+      effect_allele = effect_allele.exposure,
+      other_allele = other_allele.exposure
+    ) %>%
+    select(-c(
+      effect_allele.exposure,
+      other_allele.exposure,
+      effect_allele.outcome,
+      other_allele.outcome
+    ))
+
+  # Flip alleles based on LD matrix
+
+  ## import LD matrix if not provided
+
+  if (is.null(LD_matrix)) {
+    LD_matrix <- get_ld_matrix(harm_region$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
+  } else {
+    if (is.character(LD_matrix)) {
+      LD_matrix <- read.csv(LD_matrix)
+    }
+  }
+
+  if (all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
+    all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
+    warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Zscores VS observed Zscores")
+    harm_data <- harm_data %>%
+      mutate(pos = pos.exposure) %>%
+      select(
+        SNP, pos,
+        beta.exposure, beta.outcome,
+        se.exposure, se.outcome,
+        eaf.exposure, eaf.outcome
+      )
+  }else {
+    # flipping the harmonised data alleles to match the LD matrix
+    LD_alignment <- data.frame(
+      SNP = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 1],
+      LD_A1 = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 2],
+      LD_A2 = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 3]
+    )
+
+    temp <- merge(harm_data, LD_alignment)
+
+    temp <- temp %>%
+      mutate(
+        flipped = effect_allele != LD_A1,
+        effect_allele = if_else(flipped, other_allele, effect_allele),
+        effect_allele = if_else(flipped, effect_allele, other_allele),
+        beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
+        beta.outcome = if_else(flipped, -beta.outcome, beta.outcome),
+        eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
+        eaf.outcome = if_else(flipped, 1 - eaf.outcome, eaf.outcome),
+      )
+    
+    if (any(temp$LD_A1 != temp$effect_allele)) {
+      stop("Could not flip the alleles to match LD matrix. Check that the allele info provided is correct.")
+    }
+
+    harm_data <- temp %>%
+      mutate(pos = pos.exposure) %>%
+      select(
+        SNP, pos,
+        beta.exposure, beta.outcome,
+        se.exposure, se.outcome,
+        eaf.exposure, eaf.outcome
+      )
+    
+    # This may or may not be useful but openGWAS is down so can't test it for now, yay
+    colnames(LD_matrix) <- str_split_fixed(colnames(LD), "_", 2)[, 1]
+    rownames(LD) <- colnames(LD)
+    
+    exp_for_coloc <- harm_region %>% select(beta.exposure.flipped, se.exposure, SNP, eaf.exposure.flipped)
+    exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
+    colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
+    
+    exp_for_coloc <- as.list(exp_for_coloc)
+    exp_for_coloc$type <- exp_type
+    exp_for_coloc$sdY <- 1
+    # exp_dat <- read_csv("N:/EPIC_genetics/For Chibu (DO NOT EDIT)/Clumped_Cis_Trans_Exp_I_II.csv")
+    # exp_for_coloc$N <- as.integer(exp_dat %>% filter(Protein == prot & rsid == snp_dat$SNP) %>% select(N))
+    exp_for_coloc$N <- N_exp
+    
+    check_dataset(exp_for_coloc)
+    
+    
+    # Cancer data
+    out_for_coloc <- harm_region %>% select(beta.outcome.flipped, se.outcome, SNP, eaf.outcome.flipped)
+    out_for_coloc$se.outcome <- out_for_coloc$se.outcome^2
+    colnames(out_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
+    
+    out_for_coloc <- as.list(out_for_coloc)
+    out_for_coloc$type <- out_type
+    out_for_coloc$s <- .6 # Proportion of cases from the PRACTICAL paper
+    out_for_coloc$N <- N_out
+    
+    check_dataset(out_for_coloc)
+    
+  }
   
-  # Get snp rsid in the region of interest
-  
-  # either with plink and 1000G or just by position in exp/out data ?
-  
-  
-  # For now assume exp/out data stored in csv
-  
-  exp_data <- read.csv(path_to_exposure)
-  out_data <- read.csv(path_to_outcome)
+  # Format to go into the coloc package
   
   
 }
