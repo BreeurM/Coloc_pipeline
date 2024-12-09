@@ -4,7 +4,7 @@
 #' computing linkage disequilibrium (LD) matrices, extracting genomic regions for colocalisation,
 #' and performing colocalisation analysis using the coloc + SuSiE algorithm. The toolkit leverages PLINK
 #' TwoSampleMR, and coloc for processing of SNP data, LD computation, and colocalisation analysis
-#' 
+#'
 #' ## Key Functions:
 #' 1. `find_proxy_snps`: Identifies proxy SNPs within a specified genomic window based on LD thresholds.
 #' 2. `get_ld_matrix`: Computes and formats an LD matrix for a set of SNPs using PLINK.
@@ -192,7 +192,7 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
   # Compute the LD matrix using the ieugwasr package
   LD_Full <- ieugwasr::ld_matrix_local(rsid_list,
     bfile = bfile_loc,
-    plink_bin = plink_loc, 
+    plink_bin = plink_loc,
     with_alleles = with_alleles
   )
 
@@ -259,34 +259,42 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 
 #' Perform Colocalization Analysis with SuSiE
 #'
-#' This function performs colocalization analysis using the SuSiE method for a given pair of exposure and outcome datasets. 
+#' This function performs colocalization analysis using the SuSiE method for a given pair of exposure and outcome datasets.
 #' It computes Bayes factors for each dataset, aligns the SNPs and alleles with an optional LD matrix, and integrates the results using SuSiE.
 #'
-#' @param exp_data Either a data frame or a file path to the exposure dataset. 
-#'                 The dataset must be formatted as required by TwoSampleMR and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
-#' @param N_exp An integer specifying the sample size for the exposure dataset.
-#' @param exp_type A string specifying the type of exposure study. Accepted values are `"quant"` (quantitative trait) or `"cc"` (case-control).
-#' @param exp_sd An optional numeric value specifying the standard deviation of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
-#' @param out_data Either a data frame or a file path to the outcome dataset.
-#'                 The dataset must be formatted as required by TwoSampleMR and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
-#' @param N_out An integer specifying the sample size for the outcome dataset.
-#' @param out_type A string specifying the type of outcome study. Accepted values are `"quant"` (quantitative trait) or `"cc"` (case-control).
-#' @param out_sd An optional numeric value specifying the standard deviation of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
-#' @param LD_matrix Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix. If `NULL`, the LD matrix is computed using the `get_ld_matrix` function.
-#' @param exposure_BF_column An optional string specifying the column name containing Bayes factors in the exposure dataset. If `NULL`, Bayes factors are computed within the function.
-#' @param outcome_BF_column An optional string specifying the column name containing Bayes factors in the outcome dataset. If `NULL`, Bayes factors are computed within the function.
-#' @param window_size An integer specifying the size of the genomic window (in kilobases) for colocalization. Default is `1000`.
+#' @param exp_data      Either a data frame or a file path to the exposure dataset.
+#'                      The dataset must be formatted as required by TwoSampleMR
+#'                      and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
+#' @param N_exp         An integer specifying the sample size for the exposure dataset.
+#' @param exp_type      A string specifying the type of exposure study.
+#'                      Either `"quant"` (quantitative trait) or `"cc"` (case-control).
+#' @param exp_sd        A numeric value specifying the std of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
 #'
-#' @return A SuSiE colocalization result object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets. 
+#' @param out_data      Either a data frame or a file path to the outcome dataset.
+#'                      The dataset must be formatted as required by TwoSampleMR
+#'                      and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
+#' @param N_out         An integer specifying the sample size for the outcome dataset.
+#' @param out_type      A string specifying the type of outcome study.
+#'                      Either `"quant"` (quantitative trait) or `"cc"` (case-control).
+#' @param out_sd        An numeric value specifying the std of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
+#'
+#' @param LD_matrix     Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix.
+#'                      If `NULL`, the LD matrix is computed from 1000G using the `get_ld_matrix` function.
+#'
+#' @param exp_BF_column An optional string specifying the column name containing Bayes factors in the exposure dataset.
+#'                      If `NULL`, Bayes factors are computed within the function.
+#' @param out_BF_column An optional string specifying the column name containing Bayes factors in the outcome dataset.
+#'                      If `NULL`, Bayes factors are computed within the function.
+#'
+#' @return A SuSiE colocalization result object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets.
 #'         If SuSiE fails to converge for either dataset, the function returns `NULL`.
 main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                        out_data, N_out, out_type, out_sd = 1,
                        LD_matrix = NULL,
-                       exposure_BF_column = NULL,
-                       outcome_BF_column = NULL,
-                       window_size = 1000) {
+                       exp_BF_column = NULL,
+                       out_BF_column = NULL) {
   # Check input consistency
-  
+
   # Import exposure and outcome data if provided as file paths
   if (is.character(exp_data)) {
     exp_data <- read.csv(exp_data)
@@ -294,11 +302,11 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   if (is.character(out_data)) {
     out_data <- read.csv(out_data)
   }
-  
+
   # Harmonise the exposure and outcome data to ensure consistent SNP and allele representation
   harm_data <- harmonise_data(exp_data, out_data)
   if (any(harm_data$effect_allele.exposure != harm_data$effect_allele.outcome) |
-      any(harm_data$other_allele.exposure != harm_data$other_allele.outcome)) {
+    any(harm_data$other_allele.exposure != harm_data$other_allele.outcome)) {
     stop("Inconsistent effect alleles for exposure and outcome after harmonisation.")
   }
   harm_data <- harm_data %>%
@@ -312,7 +320,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       effect_allele.outcome,
       other_allele.outcome
     ))
-  
+
   # Import LD_matrix if provided as file paths, or import from 1000G if NULL
   if (is.null(LD_matrix)) {
     LD_matrix <- get_ld_matrix(harm_region$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
@@ -321,10 +329,10 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       LD_matrix <- read.csv(LD_matrix)
     }
   }
-  
+
   # Check for allele information in the LD matrix, and align if possible
   if (all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
-      all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
+    all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
     # SNP names in the LD_matrix do not contain allele information, or their format is wrong
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Zscores VS observed Zscores")
     harm_data <- harm_data %>%
@@ -353,12 +361,12 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
         eaf.outcome = if_else(flipped, 1 - eaf.outcome, eaf.outcome)
       )
-    
+
     if (any(temp$LD_A1 != temp$effect_allele)) {
       # Mismatched alleles after the flip, LD alleles and data alleles do not correspond
       stop("Could not flip the alleles to match LD matrix. Check that the allele info provided is correct.")
     }
-    
+
     harm_data <- temp %>%
       mutate(pos = pos.exposure) %>%
       select(
@@ -368,13 +376,13 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         eaf.exposure, eaf.outcome
       )
   }
-  
+
   # Prepare data for SuSiE colocalization analysis
-  
+
   # This may or may not be useful but openGWAS is down so can't test it for now, yay
   colnames(LD_matrix) <- str_split_fixed(colnames(LD), "_", 2)[, 1]
   rownames(LD) <- colnames(LD)
-  
+
   exp_for_coloc <- harm_region %>%
     select(
       beta.exposure,
@@ -392,8 +400,9 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     exp_for_coloc$s <- exp_sd
   }
   exp_for_coloc$N <- N_exp
-  
-  
+  exp_for_coloc$LD <- LD[exp_for_coloc$snp, exp_for_coloc$snp]
+
+
   out_for_coloc <- harm_region %>%
     select(
       beta.outcome,
@@ -411,14 +420,31 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     out_for_coloc$s <- out_sd
   }
   out_for_coloc$N <- N_out
-  
-  
+  out_for_coloc$LD <- LD[out_for_coloc$snp, out_for_coloc$snp]
+
+  # Flags for faulty allele alignment, TBC
+  exp_alignment_qc <- list(
+    kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
+      exp_for_coloc$LD,
+      n = N_exp
+    ),
+    alignment_check = check_alignment(exp_for_coloc)
+  )
+
+  out_alignment_qc <- list(
+    kriging = kriging_rss(out_for_coloc$beta / sqrt(out_for_coloc$varbeta),
+      out_for_coloc$LD,
+      n = N_out
+    ),
+    alignment_check = check.alignment(out_for_coloc)
+  )
+
   # Run SuSiE for fine-mapping and colocalization
   exp_susie <- tryCatch(
     expr = {
       temp <- coloc::runsusie(exp_for_coloc,
-                              repeat_until_convergence = F,
-                              maxit = 1000
+        repeat_until_convergence = F,
+        maxit = 1000
       )
     },
     error = function(e) {
@@ -426,12 +452,12 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       NULL
     }
   )
-  
+
   out_susie <- tryCatch(
     expr = {
       temp <- coloc::runsusie(out_for_coloc,
-                              repeat_until_convergence = F,
-                              maxit = 1000
+        repeat_until_convergence = F,
+        maxit = 1000
       )
     },
     error = function(e) {
@@ -445,8 +471,10 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     warning("Returning NULL SuSiE object")
     susie.res <- NULL
   }
-  
-  return(list(susie.res = susie.res,
-              exp_susie = exp_susie,
-              out_susie = out_susie))
+
+  return(list(
+    susie.res = susie.res,
+    exp_susie = exp_susie,
+    out_susie = out_susie
+  ))
 }
