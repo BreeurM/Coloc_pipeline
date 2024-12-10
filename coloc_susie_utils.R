@@ -261,7 +261,6 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 
 
 
-
 #' Perform Colocalization Analysis with SuSiE
 #'
 #' This function performs colocalization analysis using the SuSiE method for a given pair of exposure and outcome datasets.
@@ -328,7 +327,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   # Import LD_matrix if provided as file paths, or import from 1000G if NULL
   if (is.null(LD_matrix)) {
-    LD_matrix <- get_ld_matrix(harm_region$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
+    LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
   } else {
     if (is.character(LD_matrix)) {
       LD_matrix <- read.csv(LD_matrix)
@@ -336,8 +335,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   }
 
   # Check for allele information in the LD matrix, and align if possible
-  if (all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
-    all(str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
+  if (all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
+    all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
     # SNP names in the LD_matrix do not contain allele information, or their format is wrong
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Zscores VS observed Zscores")
     harm_data <- harm_data %>%
@@ -351,9 +350,9 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   } else {
     # Flip alleles in harmonised data to align with LD matrix
     LD_alignment <- data.frame(
-      SNP = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 1],
-      LD_A1 = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 2],
-      LD_A2 = str_split_fixed(colnames(LD_Full$LD_Anal), "_", 3)[, 3]
+      SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
+      LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
+      LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
     )
     temp <- merge(harm_data, LD_alignment)
     temp <- temp %>%
@@ -384,11 +383,11 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   # Prepare data for SuSiE colocalization analysis
 
-  # This may or may not be useful but openGWAS is down so can't test it for now, yay
-  colnames(LD_matrix) <- str_split_fixed(colnames(LD), "_", 2)[, 1]
-  rownames(LD) <- colnames(LD)
+  # Remove alleles from LD matrix column names for cross ref with ext/out data
+  colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
+  rownames(LD_matrix) <- colnames(LD_matrix)
 
-  exp_for_coloc <- harm_region %>%
+  exp_for_coloc <- harm_data %>%
     select(
       beta.exposure,
       se.exposure,
@@ -405,7 +404,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     exp_for_coloc$s <- exp_sd
   }
   exp_for_coloc$N <- N_exp
-  exp_for_coloc$LD <- LD[exp_for_coloc$snp, exp_for_coloc$snp]
+  exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
 
 
   out_for_coloc <- harm_region %>%
@@ -425,7 +424,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     out_for_coloc$s <- out_sd
   }
   out_for_coloc$N <- N_out
-  out_for_coloc$LD <- LD[out_for_coloc$snp, out_for_coloc$snp]
+  out_for_coloc$LD <- LD_matrix[out_for_coloc$snp, out_for_coloc$snp]
 
   # Flags for faulty allele alignment, TBC
   exp_alignment_qc <- list(
