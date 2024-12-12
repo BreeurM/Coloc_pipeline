@@ -2,6 +2,8 @@ rm(list = ls())
 
 library(data.table)
 library(tidyverse)
+library(dplyr)
+library(tidyr)
 library(coloc)
 library(susieR)
 library(TwoSampleMR)
@@ -66,14 +68,14 @@ extracted_snps <- tryCatch(
 ###################### Load datasets for coloc
 
 # Load summary statistics for the IV region
-prot_region <- TwoSampleMR::read_exposure_data(sum_stat_file,
-                                               sep = ",",
-                                               snp_col = "RSID", beta_col = "BETA",
-                                               se_col = "SE", log_pval = T, pval_col = "LOG10P",
-                                               effect_allele_col = "ALLELE1",
-                                               other_allele_col = "ALLELE0",
-                                               pos_col = "GENPOS", chr_col = "CHROM", eaf_col = "A1FREQ", min_pval = NA
-) %>% filter(SNP %in% extracted_snps$SNP)
+prot_region <- read.csv(sum_stat_file, sep = ",")
+prot_region <- format_data(prot_region, snps = extracted_snps$SNP,
+                                        snp_col = "RSID", beta_col = "BETA",
+                                        se_col = "SE", log_pval = T, pval_col = "LOG10P",
+                                        effect_allele_col = "ALLELE1",
+                                        other_allele_col = "ALLELE0",
+                                        pos_col = "GENPOS", chr_col = "CHROM", 
+                                        eaf_col = "A1FREQ", min_pval = NA)
 
 
 harm_data <- prot_region

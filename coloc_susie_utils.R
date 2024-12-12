@@ -26,7 +26,109 @@
 #' - Colocalisation results with posterior probabilities and fine-mapping outputs.
 
 
+#' Read and format exposure or outcome data
+#' Checks and organises columns for use with MR or enrichment tests.
+#' Infers p-values when possible from beta and se.
+#'
+#' @param dat Data frame. Must have header with at least SNP column present.
+#' @param type Is this the exposure or the outcome data that is being read in? The default is `"exposure"`.
+#' @param snps SNPs to extract. If NULL then doesn't extract any and keeps all. The default is `NULL`.
+#' @param header The default is `TRUE`.
+#' @param phenotype_col Optional column name for the column with phenotype name corresponding the the SNP. If not present then will be created with the value `"Outcome"`. The default is `"Phenotype"`.
+#' @param snp_col Required name of column with SNP rs IDs. The default is `"SNP"`.
+#' @param beta_col Required for MR. Name of column with effect sizes. The default is `"beta"`.
+#' @param se_col Required for MR. Name of column with standard errors. The default is `"se"`.
+#' @param eaf_col Required for MR. Name of column with effect allele frequency. The default is `"eaf"`.
+#' @param effect_allele_col Required for MR. Name of column with effect allele. Must contain only the characters "A", "C", "T" or "G". The default is `"effect_allele"`.
+#' @param other_allele_col Required for MR. Name of column with non effect allele. Must contain only the characters "A", "C", "T" or "G". The default is `"other_allele"`.
+#' @param pval_col Required for enrichment tests. Name of column with p-value. The default is `"pval"`.
+#' @param units_col Optional column name for units. The default is `"units"`.
+#' @param ncase_col Optional column name for number of cases. The default is `"ncase"`.
+#' @param ncontrol_col Optional column name for number of controls. The default is `"ncontrol"`.
+#' @param samplesize_col Optional column name for sample size. The default is `"samplesize"`.
+#' @param gene_col Optional column name for gene name. The default is `"gene"`.
+#' @param id_col The default is `"id"`.
+#' @param min_pval Minimum allowed p-value. The default is `1e-200`.
+#' @param z_col The default is `"z"`.
+#' @param info_col The default is `"info_col"`.
+#' @param chr_col The default is `"chr_col"`.
+#' @param pos_col The default is `"pos"`.
+#' @param log_pval The pval is -log10(P). The default is `FALSE`.
+#'
+#' @author Optimised from TwoSampleMR https://github.com/MRCIEU/TwoSampleMR/blob/master/R/read_data.R
+format_dat <- function(dat, type = "exposure", snps = NULL,
+                        phenotype_col = "Phenotype", snp_col = "SNP",
+                        beta_col = "beta", se_col = "se", eaf_col = "eaf",
+                        effect_allele_col = "effect_allele", other_allele_col = "other_allele",
+                        pval_col = "pval", units_col = "units", ncase_col = "ncase",
+                        ncontrol_col = "ncontrol", samplesize_col = "samplesize",
+                        gene_col = "gene", id_col = "id", min_pval = 1e-200,
+                        z_col = "z", info_col = "info", chr_col = "chr",
+                        pos_col = "pos", log_pval = FALSE) {
+  # Check for required SNP column
+  if (!snp_col %in% names(dat)) {
+    stop("SNP column not found")
+  }
 
+  # Select and standardize relevant columns
+  all_cols <- c(
+    phenotype_col, snp_col, beta_col, se_col, eaf_col,
+    effect_allele_col, other_allele_col, pval_col, units_col,
+    ncase_col, ncontrol_col, samplesize_col, gene_col, id_col,
+    z_col, info_col, chr_col, pos_col
+  )
+
+  dat <- dat %>%
+    select(any_of(all_cols)) %>%
+    rename_with(~"SNP", all_of(snp_col)) %>%
+    mutate(SNP = tolower(SNP) %>% str_replace_all("[[:space:]]", "")) %>%
+    filter(!is.na(SNP))
+
+  # Filter SNPs if provided
+  if (!is.null(snps)) {
+    dat <- dat %>% filter(SNP %in% snps)
+  }
+
+  # Add or rename phenotype column
+  dat <- dat %>% mutate(!!type := if_else(phenotype_col %in% names(dat), phenotype_col, type))
+  if (phenotype_col %in% names(dat) && phenotype_col != type) {
+    dat <- dat %>% select(-all_of(phenotype_col))
+  }
+
+  # Convert log p-values if needed
+  if (log_pval && pval_col %in% names(dat)) {
+    dat <- dat %>% mutate(!!pval_col := 10^-(.data[[pval_col]]))
+  }
+
+  # Remove duplicated SNPs
+  dat <- dat %>% distinct(SNP, .keep_all = TRUE)
+
+  # Check and clean columns for MR
+  required_cols <- c(beta_col, se_col, effect_allele_col)
+  optional_cols <- c(other_allele_col, eaf_col)
+  
+  if (!all(required_cols %in% names(dat))) {
+    warning("Missing required columns for MR analysis: ", paste(setdiff(required_cols, names(dat)), collapse = ", "))
+    dat <- dat %>% mutate(mr_keep = FALSE)
+  } else {
+    dat <- dat %>% mutate(mr_keep = rowSums(across(all_of(required_cols), ~ !is.na(.))) == length(required_cols))
+  }
+
+  # Infer p-values if missing
+  if (!pval_col %in% names(dat) && all(c(beta_col, se_col) %in% names(dat))) {
+    dat <- dat %>% mutate(!!pval_col := 2 * pnorm(abs(.data[[beta_col]]) / .data[[se_col]], lower.tail = FALSE))
+  }
+
+  # Generate sample size if missing
+  if (!samplesize_col %in% names(dat) && all(c(ncase_col, ncontrol_col) %in% names(dat))) {
+    dat <- dat %>% mutate(!!samplesize_col := .data[[ncase_col]] + .data[[ncontrol_col]])
+  }
+
+  # Finalize column names for output
+  dat <- dat %>% rename_with(~ paste0(.x, ".", type), setdiff(names(dat), c("SNP", type)))
+
+  return(dat)
+}
 
 
 
@@ -55,11 +157,11 @@
 #'
 #' Temporary files created during the analysis are automatically cleaned up. If the specified SNP
 #' is not found in the data, the function returns an empty data frame with the same structure as `snp_dat`.
-find_proxy_snps <- function(plink_path = "plink", 
-                            bfile_prefix = "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3", 
-                            snp_dat, 
-                            window_size_kb, 
-                            outcome_dat, 
+find_proxy_snps <- function(plink_path = "plink",
+                            bfile_prefix = "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3",
+                            snp_dat,
+                            window_size_kb,
+                            outcome_dat,
                             file_list) {
   # Check if PLINK is installed
   if (system(paste(plink_path, "--version"), ignore.stdout = TRUE) != 0) {
@@ -426,6 +528,9 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   out_for_coloc$N <- N_out
   out_for_coloc$LD <- LD_matrix[out_for_coloc$snp, out_for_coloc$snp]
 
+  # Run vanilla colocalisation as a warm up
+  ABF <- coloc.abf(exp_for_coloc, out_for_coloc)
+
   # Flags for faulty allele alignment, TBC
   exp_alignment_qc <- list(
     kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
@@ -478,6 +583,211 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   return(list(
     susie.res = susie.res,
+    abf.res = ABF,
+    exp_susie = exp_susie,
+    out_susie = out_susie
+  ))
+}
+
+
+
+
+
+#' Perform fine mapping with SuSiE on one dataset
+#'
+#' This function implements the SuSiE method for a given dataset amd outputs credible sets and Bayes Factors.
+#'
+#' @param exp_data      Either a data frame or a file path to the exposure dataset.
+#'                      The dataset must be formatted as required by TwoSampleMR
+#'                      and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
+#' @param N_exp         An integer specifying the sample size for the exposure dataset.
+#' @param exp_type      A string specifying the type of exposure study.
+#'                      Either `"quant"` (quantitative trait) or `"cc"` (case-control).
+#' @param exp_sd        A numeric value specifying the std of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
+#'
+#' @param LD_matrix     Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix.
+#'                      If `NULL`, the LD matrix is computed from 1000G using the `get_ld_matrix` function.
+#' @return A SuSiE object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets.
+#'         If SuSiE fails to converge, the function returns `NULL`.
+finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
+                          LD_matrix = NULL) {
+  # Check input consistency
+
+  # Import exposure and outcome data if provided as file paths
+  if (is.character(exp_data)) {
+    exp_data <- read.csv(exp_data)
+  }
+
+  # Harmonise the exposure and outcome data to ensure consistent SNP and allele representation
+  harm_data <- harm_data %>%
+    mutate(
+      effect_allele = effect_allele.exposure,
+      other_allele = other_allele.exposure
+    ) %>%
+    select(-c(
+      effect_allele.exposure,
+      other_allele.exposure,
+      effect_allele.outcome,
+      other_allele.outcome
+    ))
+
+  # Import LD_matrix if provided as file paths, or import from 1000G if NULL
+  if (is.null(LD_matrix)) {
+    LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
+  } else {
+    if (is.character(LD_matrix)) {
+      LD_matrix <- read.csv(LD_matrix)
+    }
+  }
+
+  # Check for allele information in the LD matrix, and align if possible
+  if (all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
+    all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
+    # SNP names in the LD_matrix do not contain allele information, or their format is wrong
+    warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Zscores VS observed Zscores")
+    harm_data <- harm_data %>%
+      mutate(pos = pos.exposure) %>%
+      select(
+        SNP, pos,
+        beta.exposure, beta.outcome,
+        se.exposure, se.outcome,
+        eaf.exposure, eaf.outcome
+      )
+  } else {
+    # Flip alleles in harmonised data to align with LD matrix
+    LD_alignment <- data.frame(
+      SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
+      LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
+      LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
+    )
+    temp <- merge(harm_data, LD_alignment)
+    temp <- temp %>%
+      mutate(
+        flipped = effect_allele != LD_A1,
+        effect_allele = if_else(flipped, other_allele, effect_allele),
+        effect_allele = if_else(flipped, effect_allele, other_allele),
+        beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
+        beta.outcome = if_else(flipped, -beta.outcome, beta.outcome),
+        eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
+        eaf.outcome = if_else(flipped, 1 - eaf.outcome, eaf.outcome)
+      )
+
+    if (any(temp$LD_A1 != temp$effect_allele)) {
+      # Mismatched alleles after the flip, LD alleles and data alleles do not correspond
+      stop("Could not flip the alleles to match LD matrix. Check that the allele info provided is correct.")
+    }
+
+    harm_data <- temp %>%
+      mutate(pos = pos.exposure) %>%
+      select(
+        SNP, pos,
+        beta.exposure, beta.outcome,
+        se.exposure, se.outcome,
+        eaf.exposure, eaf.outcome
+      )
+  }
+
+  # Prepare data for SuSiE colocalization analysis
+
+  # Remove alleles from LD matrix column names for cross ref with ext/out data
+  colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
+  rownames(LD_matrix) <- colnames(LD_matrix)
+
+  exp_for_coloc <- harm_data %>%
+    select(
+      beta.exposure,
+      se.exposure,
+      SNP,
+      eaf.exposure
+    )
+  exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
+  colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
+  exp_for_coloc <- as.list(exp_for_coloc)
+  exp_for_coloc$type <- exp_type
+  if (exp_type == "quant") {
+    exp_for_coloc$sdY <- exp_sd
+  } else {
+    exp_for_coloc$s <- exp_sd
+  }
+  exp_for_coloc$N <- N_exp
+  exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
+
+
+  out_for_coloc <- harm_region %>%
+    select(
+      beta.outcome,
+      se.outcome,
+      SNP,
+      eaf.outcome
+    )
+  out_for_coloc$se.outcome <- out_for_coloc$se.outcome^2
+  colnames(out_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
+  out_for_coloc <- as.list(out_for_coloc)
+  out_for_coloc$type <- out_type
+  if (out_type == "quant") {
+    out_for_coloc$sdY <- out_sd
+  } else {
+    out_for_coloc$s <- out_sd
+  }
+  out_for_coloc$N <- N_out
+  out_for_coloc$LD <- LD_matrix[out_for_coloc$snp, out_for_coloc$snp]
+
+  # Run vanilla colocalisation as a warm up
+  ABF <- coloc.abf(exp_for_coloc, out_for_coloc)
+
+  # Flags for faulty allele alignment, TBC
+  exp_alignment_qc <- list(
+    kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
+      exp_for_coloc$LD,
+      n = N_exp
+    ),
+    alignment_check = check_alignment(exp_for_coloc)
+  )
+
+  out_alignment_qc <- list(
+    kriging = kriging_rss(out_for_coloc$beta / sqrt(out_for_coloc$varbeta),
+      out_for_coloc$LD,
+      n = N_out
+    ),
+    alignment_check = check.alignment(out_for_coloc)
+  )
+
+  # Run SuSiE for fine-mapping and colocalization
+  exp_susie <- tryCatch(
+    expr = {
+      temp <- coloc::runsusie(exp_for_coloc,
+        repeat_until_convergence = F,
+        maxit = 1000
+      )
+    },
+    error = function(e) {
+      warning("SuSiE did not converge for exposure")
+      NULL
+    }
+  )
+
+  out_susie <- tryCatch(
+    expr = {
+      temp <- coloc::runsusie(out_for_coloc,
+        repeat_until_convergence = F,
+        maxit = 1000
+      )
+    },
+    error = function(e) {
+      warning("SuSiE did not converge for outcome")
+      NULL
+    }
+  )
+  if (!is.null(exp_susie) & !is.null(out_susie)) {
+    susie.res <- coloc::coloc.susie(exp_susie, out_susie)
+  } else {
+    warning("Returning NULL SuSiE object")
+    susie.res <- NULL
+  }
+
+  return(list(
+    susie.res = susie.res,
+    abf.res = ABF,
     exp_susie = exp_susie,
     out_susie = out_susie
   ))
