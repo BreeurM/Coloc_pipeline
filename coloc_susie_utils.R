@@ -56,15 +56,15 @@
 #' @param log_pval The pval is -log10(P). The default is `FALSE`.
 #'
 #' @author Optimised from TwoSampleMR https://github.com/MRCIEU/TwoSampleMR/blob/master/R/read_data.R
-format_dat <- function(dat, type = "exposure", snps = NULL,
-                        phenotype_col = "Phenotype", snp_col = "SNP",
-                        beta_col = "beta", se_col = "se", eaf_col = "eaf",
-                        effect_allele_col = "effect_allele", other_allele_col = "other_allele",
-                        pval_col = "pval", units_col = "units", ncase_col = "ncase",
-                        ncontrol_col = "ncontrol", samplesize_col = "samplesize",
-                        gene_col = "gene", id_col = "id", min_pval = 1e-200,
-                        z_col = "z", info_col = "info", chr_col = "chr",
-                        pos_col = "pos", log_pval = FALSE) {
+format_dat <- function(dat, type = "exposure", snps = NA,
+                        phenotype_col = NA, snp_col = NA,
+                        beta_col = NA, se_col = NA, eaf_col = NA,
+                        effect_allele_col = NA, other_allele_col = NA,
+                        pval_col = NA, units_col = NA, ncase_col = NA,
+                        ncontrol_col = NA, samplesize_col = NA,
+                        gene_col = NA, id_col = NA, min_pval = 1e-200,
+                        z_col = NA, info_col = NA, chr_col = NA,
+                        pos_col = NA, log_pval = FALSE) {
   # Check for required SNP column
   if (!snp_col %in% names(dat)) {
     stop("SNP column not found")
