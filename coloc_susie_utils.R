@@ -400,7 +400,7 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 #'         If SuSiE fails to converge for either dataset, the function returns `NULL`.
 main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                        out_data, N_out, out_type, out_sd = 1,
-                       LD_matrix = NULL, plink_loc = "plink", bfile_loc,
+                       LD_matrix = NULL, plink_loc = "plink", bfile_loc = NULL,
                        exp_coverage = .95, out_coverage = .95) {
   # Check input consistency
 
