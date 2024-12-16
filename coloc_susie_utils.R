@@ -77,6 +77,8 @@ format_dat <- function(dat, type = "exposure", snps = NA,
     ncase_col, ncontrol_col, samplesize_col, gene_col, id_col,
     z_col, info_col, chr_col, pos_col
   )
+  
+  all_cols <- allcols[!is.na(all_cols)]
 
   dat <- dat %>%
     select(any_of(all_cols)) %>%
