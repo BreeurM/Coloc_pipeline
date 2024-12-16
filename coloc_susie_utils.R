@@ -57,14 +57,14 @@
 #'
 #' @author Optimised from TwoSampleMR https://github.com/MRCIEU/TwoSampleMR/blob/master/R/read_data.R
 format_dat <- function(dat, type = "exposure", snps = NA,
-                        phenotype_col = NA, snp_col = NA,
-                        beta_col = NA, se_col = NA, eaf_col = NA,
-                        effect_allele_col = NA, other_allele_col = NA,
-                        pval_col = NA, units_col = NA, ncase_col = NA,
-                        ncontrol_col = NA, samplesize_col = NA,
-                        gene_col = NA, id_col = NA, min_pval = 1e-200,
-                        z_col = NA, info_col = NA, chr_col = NA,
-                        pos_col = NA, log_pval = FALSE) {
+                       phenotype_col = NA, snp_col = NA,
+                       beta_col = NA, se_col = NA, eaf_col = NA,
+                       effect_allele_col = NA, other_allele_col = NA,
+                       pval_col = NA, units_col = NA, ncase_col = NA,
+                       ncontrol_col = NA, samplesize_col = NA,
+                       gene_col = NA, id_col = NA, min_pval = 1e-200,
+                       z_col = NA, info_col = NA, chr_col = NA,
+                       pos_col = NA, log_pval = FALSE) {
   # Check for required SNP column
   if (!snp_col %in% names(dat)) {
     stop("SNP column not found")
@@ -77,7 +77,7 @@ format_dat <- function(dat, type = "exposure", snps = NA,
     ncase_col, ncontrol_col, samplesize_col, gene_col, id_col,
     z_col, info_col, chr_col, pos_col
   )
-  
+
   all_cols <- allcols[!is.na(all_cols)]
 
   dat <- dat %>%
@@ -108,7 +108,7 @@ format_dat <- function(dat, type = "exposure", snps = NA,
   # Check and clean columns for MR
   required_cols <- c(beta_col, se_col, effect_allele_col)
   optional_cols <- c(other_allele_col, eaf_col)
-  
+
   if (!all(required_cols %in% names(dat))) {
     warning("Missing required columns for MR analysis: ", paste(setdiff(required_cols, names(dat)), collapse = ", "))
     dat <- dat %>% mutate(mr_keep = FALSE)
@@ -293,7 +293,7 @@ find_proxy_snps <- function(plink_path = "plink",
 #' locally using PLINK. Any temporary files created during the computation are cleaned up
 #' after the LD matrix is generated. Columns or rows with excessive missing values are
 #' removed from the analytical matrix, ensuring the returned matrix is complete.
-get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = F) {
+get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = T) {
   # Set the temporary directory
   temp_dir <- "Temp_dir/"
   tempdir(temp_dir)
@@ -599,20 +599,26 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 #'
 #' This function implements the SuSiE method for a given dataset amd outputs credible sets and Bayes Factors.
 #'
-#' @param exp_data      Either a data frame or a file path to the exposure dataset.
-#'                      The dataset must be formatted as required by TwoSampleMR
-#'                      and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
-#' @param N_exp         An integer specifying the sample size for the exposure dataset.
-#' @param exp_type      A string specifying the type of exposure study.
-#'                      Either `"quant"` (quantitative trait) or `"cc"` (case-control).
-#' @param exp_sd        A numeric value specifying the std of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
+#' @param exp_data  Either a data frame or a file path to the exposure dataset.
+#'                  The dataset must be formatted as required by TwoSampleMR
+#'                  and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
+#' @param N_exp     An integer specifying the sample size for the exposure dataset.
+#' @param exp_type  A string specifying the type of exposure study.
+#'                  Either `"quant"` (quantitative trait) or `"cc"` (case-control).
+#' @param exp_sd    A numeric value specifying the std of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
 #'
-#' @param LD_matrix     Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix.
-#'                      If `NULL`, the LD matrix is computed from 1000G using the `get_ld_matrix` function.
+#' @param LD_matrix Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix.
+#'                  If `NULL`, the LD matrix is computed from 1000G using the `get_ld_matrix` function.
+#'
+#' @param max_iter  Max number of iterations to run susie_rss
+#' @param ...       Parameters to be passed on to susie_rss
+#'
 #' @return A SuSiE object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets.
 #'         If SuSiE fails to converge, the function returns `NULL`.
+#'         
+#'  @author Adapted from Chris Wallace - runsusie: https://github.com/chr1swallace/coloc/blob/main/R/susie.R#L379
 finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
-                          LD_matrix = NULL) {
+                          LD_matrix = NULL, ...) {
   # Check input consistency
 
   # Import exposure and outcome data if provided as file paths
@@ -621,19 +627,16 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   }
 
   # Harmonise the exposure and outcome data to ensure consistent SNP and allele representation
-  harm_data <- harm_data %>%
+  harm_data <- exp_data %>%
     mutate(
       effect_allele = effect_allele.exposure,
       other_allele = other_allele.exposure
     ) %>%
     select(-c(
       effect_allele.exposure,
-      other_allele.exposure,
-      effect_allele.outcome,
-      other_allele.outcome
+      other_allele.exposure
     ))
 
-  # Import LD_matrix if provided as file paths, or import from 1000G if NULL
   if (is.null(LD_matrix)) {
     LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
   } else {
@@ -643,17 +646,17 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   }
 
   # Check for allele information in the LD matrix, and align if possible
-  if (all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
-    all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
+  if (!(all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
+    all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 3] %in% c("A", "C", "T", "G")))) {
     # SNP names in the LD_matrix do not contain allele information, or their format is wrong
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Zscores VS observed Zscores")
     harm_data <- harm_data %>%
       mutate(pos = pos.exposure) %>%
       select(
         SNP, pos,
-        beta.exposure, beta.outcome,
-        se.exposure, se.outcome,
-        eaf.exposure, eaf.outcome
+        beta.exposure,
+        se.exposure,
+        eaf.exposure
       )
   } else {
     # Flip alleles in harmonised data to align with LD matrix
@@ -667,11 +670,9 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       mutate(
         flipped = effect_allele != LD_A1,
         effect_allele = if_else(flipped, other_allele, effect_allele),
-        effect_allele = if_else(flipped, effect_allele, other_allele),
+        other_allele = if_else(flipped, effect_allele, other_allele),
         beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
-        beta.outcome = if_else(flipped, -beta.outcome, beta.outcome),
-        eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
-        eaf.outcome = if_else(flipped, 1 - eaf.outcome, eaf.outcome)
+        eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure)
       )
 
     if (any(temp$LD_A1 != temp$effect_allele)) {
@@ -683,17 +684,12 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       mutate(pos = pos.exposure) %>%
       select(
         SNP, pos,
-        beta.exposure, beta.outcome,
-        se.exposure, se.outcome,
-        eaf.exposure, eaf.outcome
+        beta.exposure,
+        se.exposure,
+        eaf.exposure
       )
   }
 
-  # Prepare data for SuSiE colocalization analysis
-
-  # Remove alleles from LD matrix column names for cross ref with ext/out data
-  colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
-  rownames(LD_matrix) <- colnames(LD_matrix)
 
   exp_for_coloc <- harm_data %>%
     select(
@@ -702,6 +698,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       SNP,
       eaf.exposure
     )
+
   exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
   colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
   exp_for_coloc <- as.list(exp_for_coloc)
@@ -712,85 +709,50 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     exp_for_coloc$s <- exp_sd
   }
   exp_for_coloc$N <- N_exp
+
+  colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
+  rownames(LD_matrix) <- colnames(LD_matrix)
   exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
 
+  alignment_check <- check_alignment(exp_for_coloc)
 
-  out_for_coloc <- harm_region %>%
-    select(
-      beta.outcome,
-      se.outcome,
-      SNP,
-      eaf.outcome
+  if (alignment_check < .6) {
+    stop("Suspected alignment error")
+  }
+
+  z <- exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta)
+  names(z) <- exp_for_coloc$snp
+  LD <- exp_for_coloc$LD
+  snp <- exp_for_coloc$snp
+
+  converged <- FALSE
+  ## set some defaults for susie arguments
+  susie_args <- list(...)
+  if ("max_iter" %in% names(susie_args)) {
+    maxit <- susie_args$max_iter
+    susie_args <- susie_args[setdiff(names(susie_args), "max_iter")]
+  }
+  ## at 0.12.6 susieR introduced need for n = sample size
+  if (!("n" %in% names(susie_args))) {
+    susie_args <- c(list(n = exp_for_coloc$N), susie_args)
+  }
+
+  while (!converged) {
+    message("running max iterations: ", maxit)
+    res <- do.call(
+      susie_rss,
+      c(list(z = z, R = LD, max_iter = maxit), susie_args)
     )
-  out_for_coloc$se.outcome <- out_for_coloc$se.outcome^2
-  colnames(out_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
-  out_for_coloc <- as.list(out_for_coloc)
-  out_for_coloc$type <- out_type
-  if (out_type == "quant") {
-    out_for_coloc$sdY <- out_sd
-  } else {
-    out_for_coloc$s <- out_sd
-  }
-  out_for_coloc$N <- N_out
-  out_for_coloc$LD <- LD_matrix[out_for_coloc$snp, out_for_coloc$snp]
-
-  # Run vanilla colocalisation as a warm up
-  ABF <- coloc.abf(exp_for_coloc, out_for_coloc)
-
-  # Flags for faulty allele alignment, TBC
-  exp_alignment_qc <- list(
-    kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
-      exp_for_coloc$LD,
-      n = N_exp
-    ),
-    alignment_check = check_alignment(exp_for_coloc)
-  )
-
-  out_alignment_qc <- list(
-    kriging = kriging_rss(out_for_coloc$beta / sqrt(out_for_coloc$varbeta),
-      out_for_coloc$LD,
-      n = N_out
-    ),
-    alignment_check = check.alignment(out_for_coloc)
-  )
-
-  # Run SuSiE for fine-mapping and colocalization
-  exp_susie <- tryCatch(
-    expr = {
-      temp <- coloc::runsusie(exp_for_coloc,
-        repeat_until_convergence = F,
-        maxit = 1000
-      )
-    },
-    error = function(e) {
-      warning("SuSiE did not converge for exposure")
-      NULL
+    converged <- res$converged # s_init=res; maxit=maxit*2
+    message("\tconverged: ", converged)
+    if (!converged && repeat_until_convergence == FALSE) {
+      stop("susie_rss() did not converge in ", maxit, " iterations. Try running with run_until_convergence=TRUE")
     }
-  )
-
-  out_susie <- tryCatch(
-    expr = {
-      temp <- coloc::runsusie(out_for_coloc,
-        repeat_until_convergence = F,
-        maxit = 1000
-      )
-    },
-    error = function(e) {
-      warning("SuSiE did not converge for outcome")
-      NULL
-    }
-  )
-  if (!is.null(exp_susie) & !is.null(out_susie)) {
-    susie.res <- coloc::coloc.susie(exp_susie, out_susie)
-  } else {
-    warning("Returning NULL SuSiE object")
-    susie.res <- NULL
+    if (!converged) {
+      maxit <- maxit * 100
+    } # no point in half measures!
   }
+  susie.res <- annotate_susie(res, snp, LD)
 
-  return(list(
-    susie.res = susie.res,
-    abf.res = ABF,
-    exp_susie = exp_susie,
-    out_susie = out_susie
-  ))
+  return(susie.res)
 }

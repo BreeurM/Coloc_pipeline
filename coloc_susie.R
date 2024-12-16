@@ -78,77 +78,80 @@ prot_region <- format_data(prot_region, snps = extracted_snps$SNP,
                                         eaf_col = "A1FREQ", min_pval = NA)
 
 
-harm_data <- prot_region
+test <- finemap_susie(exp_data = prot_region,
+                      N_exp = 36000,
+                      exp_type = "quant")
 
-harm_data <- harm_data %>%
-  mutate(
-    effect_allele = effect_allele.exposure,
-    other_allele = other_allele.exposure
-  )
-
-harm_data <- harm_data %>%
-  select(-c(
-    effect_allele.exposure,
-    other_allele.exposure
-  ))
-
-LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
-
-LD_alignment <- data.frame(
-  SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
-  LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
-  LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
-)
-
-temp <- merge(harm_data, LD_alignment)
-
-temp <- temp %>%
-  mutate(
-    flipped = effect_allele != LD_A1,
-    effect_allele = if_else(flipped, other_allele, effect_allele),
-    effect_allele = if_else(flipped, effect_allele, other_allele),
-    beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
-    eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure)
-  )
-
-harm_data <- temp %>%
-  mutate(pos = pos.exposure) %>%
-  select(
-    SNP, pos,
-    beta.exposure,
-    se.exposure,
-    eaf.exposure
-  )
-
-
-exp_for_coloc <- harm_data %>%
-  select(
-    beta.exposure,
-    se.exposure,
-    SNP,
-    eaf.exposure
-  )
-exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
-colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
-exp_for_coloc <- as.list(exp_for_coloc)
-exp_for_coloc$type <- "quant"
-exp_for_coloc$sdY <- 1
-exp_for_coloc$N <- 36000
-
-colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
-rownames(LD_matrix) <- colnames(LD_matrix)
-exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
-
-check_alignment(exp_for_coloc)
-
-s1 <- coloc::runsusie(exp_for_coloc,
-                            repeat_until_convergence = F,
-                            maxit = 1000)
-
-
-cs1=s1$sets
-idx1=cs1$cs_index
-bf1=s1$lbf_variable[idx1,,drop=FALSE]
+# harm_data <- prot_region
+# 
+# harm_data <- harm_data %>%
+#   mutate(
+#     effect_allele = effect_allele.exposure,
+#     other_allele = other_allele.exposure
+#   )
+# 
+# harm_data <- harm_data %>%
+#   select(-c(
+#     effect_allele.exposure,
+#     other_allele.exposure
+#   ))
+# 
+# LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
+# 
+# LD_alignment <- data.frame(
+#   SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
+#   LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
+#   LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
+# )
+# 
+# temp <- merge(harm_data, LD_alignment)
+# 
+# temp <- temp %>%
+#   mutate(
+#     flipped = effect_allele != LD_A1,
+#     effect_allele = if_else(flipped, other_allele, effect_allele),
+#     effect_allele = if_else(flipped, effect_allele, other_allele),
+#     beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
+#     eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure)
+#   )
+# 
+# harm_data <- temp %>%
+#   mutate(pos = pos.exposure) %>%
+#   select(
+#     SNP, pos,
+#     beta.exposure,
+#     se.exposure,
+#     eaf.exposure
+#   )
+# 
+# 
+# exp_for_coloc <- harm_data %>%
+#   select(
+#     beta.exposure,
+#     se.exposure,
+#     SNP,
+#     eaf.exposure
+#   )
+# exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
+# colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
+# exp_for_coloc <- as.list(exp_for_coloc)
+# exp_for_coloc$type <- "quant"
+# exp_for_coloc$sdY <- 1
+# exp_for_coloc$N <- 36000
+# 
+# colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
+# rownames(LD_matrix) <- colnames(LD_matrix)
+# exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
+# 
+# check_alignment(exp_for_coloc)
+# 
+# s1 <- coloc::runsusie(exp_for_coloc,
+#                             repeat_until_convergence = F,
+#                             maxit = 1000)
+# 
+# cs1=s1$sets
+# idx1=cs1$cs_index
+# bf1=s1$lbf_variable[idx1,,drop=FALSE]
 
 
 
