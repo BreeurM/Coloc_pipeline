@@ -77,6 +77,11 @@ res <- main_coloc(exp_data = exp_data, N_exp = 36000, exp_type = "quant", exp_sd
                bfile_loc = "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3")
 
 
+# To provide custom LD matrix, make sure that the column names are in the format
+# "rsID_Allele1_Allele2"
+# If not possible, make sure that the alleles and of your exposure data, outcome
+# data, and LD matrix are already all aligned.
+
 
 ################################################################################ 
 # Examine results
