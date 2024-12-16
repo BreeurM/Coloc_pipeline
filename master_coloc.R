@@ -105,7 +105,7 @@ res$finemapping.res$out_susie$sets
 # $requested_coverage
 # [1] 0.95
 
-# No credible set was found for PanC, which is in line with the low p-vals in out_data
+# No credible set was found for PanC, which is in line with the high p-vals in out_data
 min(out_data$pval.outcome)
 # [1] 0.01166011
 
