@@ -38,7 +38,7 @@ cat("Potential lead variants span a range of", max(temp) - min(temp), "kb \n")
 ggplot(exp_raw, aes(x = pos.exposure, y= -log10(pval.exposure))) + geom_point()
 
 # Set broad manual window 
-exp_data <- exp_raw %>% filter(pos.exposure > 4.25e7 & pos.exposure < 4.3e7)
+# exp_data <- exp_raw %>% filter(pos.exposure > 4.25e7 & pos.exposure < 4.3e7)
 
 # Another option if the lead variant is known
 lead_var <- "rs2744077"
