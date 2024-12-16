@@ -79,8 +79,10 @@ prot_region <- format_data(prot_region, snps = extracted_snps$SNP,
 
 
 test <- finemap_susie(exp_data = prot_region,
-                      N_exp = 36000,
-                      exp_type = "quant")
+                      N_exp = 34000,
+                      exp_type = "quant",
+                      LD_matrix = LD_matrix,
+                      max_iter = 1000)
 
 # harm_data <- prot_region
 # 
@@ -105,12 +107,11 @@ test <- finemap_susie(exp_data = prot_region,
 # )
 # 
 # temp <- merge(harm_data, LD_alignment)
-# 
+# temp <- temp %>% mutate(flipped = effect_allele != LD_A1)
 # temp <- temp %>%
 #   mutate(
-#     flipped = effect_allele != LD_A1,
 #     effect_allele = if_else(flipped, other_allele, effect_allele),
-#     effect_allele = if_else(flipped, effect_allele, other_allele),
+#     other_allele = if_else(flipped, effect_allele, other_allele),
 #     beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
 #     eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure)
 #   )
@@ -145,6 +146,7 @@ test <- finemap_susie(exp_data = prot_region,
 # 
 # check_alignment(exp_for_coloc)
 # 
+# 
 # s1 <- coloc::runsusie(exp_for_coloc,
 #                             repeat_until_convergence = F,
 #                             maxit = 1000)
@@ -152,6 +154,6 @@ test <- finemap_susie(exp_data = prot_region,
 # cs1=s1$sets
 # idx1=cs1$cs_index
 # bf1=s1$lbf_variable[idx1,,drop=FALSE]
-
-
-
+# 
+# 
+# 

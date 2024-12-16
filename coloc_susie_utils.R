@@ -388,19 +388,20 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 #'
 #' @param LD_matrix     Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix.
 #'                      If `NULL`, the LD matrix is computed from 1000G using the `get_ld_matrix` function.
+#' @param plink_loc     A string containing path to plink file, if needed to extract LD matrix. default is `"plink"`
+#' @param bfile_loc     A string with location of 1000G bfile.
 #'
-#' @param exp_BF_column An optional string specifying the column name containing Bayes factors in the exposure dataset.
-#'                      If `NULL`, Bayes factors are computed within the function.
-#' @param out_BF_column An optional string specifying the column name containing Bayes factors in the outcome dataset.
-#'                      If `NULL`, Bayes factors are computed within the function.
+#' @param exp_coverage Dictates the strength of the signal that susie is able to detect.
+#'                     Default is `.95`, values closer to 0 allow for weaker signals to be detected
+#' @param out_coverage Dictates the strength of the signal that susie is able to detect.
+#'                     Default is `.95`, values closer to 0 allow for weaker signals to be detected
 #'
 #' @return A SuSiE colocalization result object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets.
 #'         If SuSiE fails to converge for either dataset, the function returns `NULL`.
 main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                        out_data, N_out, out_type, out_sd = 1,
-                       LD_matrix = NULL,
-                       exp_BF_column = NULL,
-                       out_BF_column = NULL) {
+                       LD_matrix = NULL, plink_loc = "plink", bfile_loc,
+                       exp_coverage = .95, out_coverage = .95) {
   # Check input consistency
 
   # Import exposure and outcome data if provided as file paths
@@ -413,6 +414,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   # Harmonise the exposure and outcome data to ensure consistent SNP and allele representation
   harm_data <- harmonise_data(exp_data, out_data)
+  harm_data <- harm_data[harm_data$effect_allele.exposure == harm_data$effect_allele.outcome, ]
+  harm_data <- harm_data[harm_data$other_allele.exposure == harm_data$other_allele.outcome, ]
   if (any(harm_data$effect_allele.exposure != harm_data$effect_allele.outcome) |
     any(harm_data$other_allele.exposure != harm_data$other_allele.outcome)) {
     stop("Inconsistent effect alleles for exposure and outcome after harmonisation.")
@@ -439,8 +442,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   }
 
   # Check for allele information in the LD matrix, and align if possible
-  if (all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
-    all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 3] %in% c("A", "C", "T", "G"))) {
+  if (!(all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
+    all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 3] %in% c("A", "C", "T", "G")))) {
     # SNP names in the LD_matrix do not contain allele information, or their format is wrong
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Zscores VS observed Zscores")
     harm_data <- harm_data %>%
@@ -463,7 +466,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       mutate(
         flipped = effect_allele != LD_A1,
         effect_allele = if_else(flipped, other_allele, effect_allele),
-        effect_allele = if_else(flipped, effect_allele, other_allele),
+        other_allele = if_else(flipped, effect_allele, other_allele),
         beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
         beta.outcome = if_else(flipped, -beta.outcome, beta.outcome),
         eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
@@ -511,7 +514,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
 
 
-  out_for_coloc <- harm_region %>%
+  out_for_coloc <- harm_data %>%
     select(
       beta.outcome,
       se.outcome,
@@ -533,29 +536,36 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   # Run vanilla colocalisation as a warm up
   ABF <- coloc.abf(exp_for_coloc, out_for_coloc)
 
-  # Flags for faulty allele alignment, TBC
-  exp_alignment_qc <- list(
+  # Flags for faulty allele alignment
+  exp_qc <- list(
     kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
       exp_for_coloc$LD,
       n = N_exp
     ),
     alignment_check = check_alignment(exp_for_coloc)
   )
+  if (exp_qc$alignment_check < 0.7) {
+    warning("Suspected alignment error for exposure data.")
+  }
 
-  out_alignment_qc <- list(
+  out_qc <- list(
     kriging = kriging_rss(out_for_coloc$beta / sqrt(out_for_coloc$varbeta),
       out_for_coloc$LD,
       n = N_out
     ),
     alignment_check = check.alignment(out_for_coloc)
   )
+  if (out_qc$alignment_check < 0.7) {
+    warning("Suspected alignment error for outcome data.")
+  }
 
   # Run SuSiE for fine-mapping and colocalization
   exp_susie <- tryCatch(
     expr = {
       temp <- coloc::runsusie(exp_for_coloc,
         repeat_until_convergence = F,
-        maxit = 1000
+        maxit = 1000,
+        coverage = exp_coverage
       )
     },
     error = function(e) {
@@ -568,7 +578,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     expr = {
       temp <- coloc::runsusie(out_for_coloc,
         repeat_until_convergence = F,
-        maxit = 1000
+        maxit = 1000,
+        coverage = out_coverage
       )
     },
     error = function(e) {
@@ -584,10 +595,18 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   }
 
   return(list(
-    susie.res = susie.res,
-    abf.res = ABF,
-    exp_susie = exp_susie,
-    out_susie = out_susie
+    coloc.res = list(
+      susie.res = susie.res,
+      abf.res = ABF
+    ),
+    finemapping.res = list(
+      exp_susie = exp_susie,
+      out_susie = out_susie
+    ),
+    flags = list(
+      exp_alignment_check = exp_qc,
+      out_alignment_check = out_qc
+    )
   ))
 }
 
@@ -615,18 +634,20 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 #'
 #' @return A SuSiE object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets.
 #'         If SuSiE fails to converge, the function returns `NULL`.
-#'         
+#'
 #'  @author Adapted from Chris Wallace - runsusie: https://github.com/chr1swallace/coloc/blob/main/R/susie.R#L379
 finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                           LD_matrix = NULL, ...) {
   # Check input consistency
+  # exp_type
 
-  # Import exposure and outcome data if provided as file paths
+  # Import exposure data if provided as a file path
   if (is.character(exp_data)) {
     exp_data <- read.csv(exp_data)
   }
 
-  # Harmonise the exposure and outcome data to ensure consistent SNP and allele representation
+  # Harmonize the exposure data to ensure consistent SNP and allele representation
+  # Align column names and remove redundant columns
   harm_data <- exp_data %>%
     mutate(
       effect_allele = effect_allele.exposure,
@@ -637,19 +658,22 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       other_allele.exposure
     ))
 
+  # Load or compute the LD matrix
   if (is.null(LD_matrix)) {
-    LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
+    # Compute LD matrix using external function if not provided
+    LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = TRUE)$LD_Anal
   } else {
+    # Read LD matrix from a file if provided as a file path
     if (is.character(LD_matrix)) {
       LD_matrix <- read.csv(LD_matrix)
     }
   }
 
-  # Check for allele information in the LD matrix, and align if possible
+  # Check if allele information is present in the LD matrix and align if necessary
   if (!(all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
     all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 3] %in% c("A", "C", "T", "G")))) {
-    # SNP names in the LD_matrix do not contain allele information, or their format is wrong
-    warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Zscores VS observed Zscores")
+    # Handle case where allele information is missing or incorrect
+    warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Z-scores vs. observed Z-scores")
     harm_data <- harm_data %>%
       mutate(pos = pos.exposure) %>%
       select(
@@ -659,7 +683,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         eaf.exposure
       )
   } else {
-    # Flip alleles in harmonised data to align with LD matrix
+    # Flip alleles in harmonized data to align with the LD matrix
     LD_alignment <- data.frame(
       SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
       LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
@@ -676,7 +700,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       )
 
     if (any(temp$LD_A1 != temp$effect_allele)) {
-      # Mismatched alleles after the flip, LD alleles and data alleles do not correspond
+      # Stop execution if alleles cannot be aligned
       stop("Could not flip the alleles to match LD matrix. Check that the allele info provided is correct.")
     }
 
@@ -690,7 +714,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       )
   }
 
-
+  # Prepare exposure data for coloc analysis
   exp_for_coloc <- harm_data %>%
     select(
       beta.exposure,
@@ -699,10 +723,13 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       eaf.exposure
     )
 
+  # Convert standard errors to variances
   exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
   colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
   exp_for_coloc <- as.list(exp_for_coloc)
   exp_for_coloc$type <- exp_type
+
+  # Add specific parameters for the exposure study type
   if (exp_type == "quant") {
     exp_for_coloc$sdY <- exp_sd
   } else {
@@ -710,48 +737,63 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   }
   exp_for_coloc$N <- N_exp
 
+  # Adjust LD matrix SNP names to match the exposure data
   colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
   rownames(LD_matrix) <- colnames(LD_matrix)
   exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
 
+  # Check alignment between exposure data and LD matrix
   alignment_check <- check_alignment(exp_for_coloc)
 
-  if (alignment_check < .6) {
+  if (alignment_check < 0.6) {
     stop("Suspected alignment error")
   }
 
-  z <- exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta)
-  names(z) <- exp_for_coloc$snp
-  LD <- exp_for_coloc$LD
-  snp <- exp_for_coloc$snp
+  # Calculate Z-scores for SuSiE
+  z <- harm_data$beta.exposure / harm_data$se.exposure
 
+  snp <- harm_data$SNP
+  names(z) <- snp
+  LD <- LD_matrix[snp, snp]
+
+  # Initialize convergence flag
   converged <- FALSE
-  ## set some defaults for susie arguments
+
+  # Set defaults for SuSiE arguments
   susie_args <- list(...)
   if ("max_iter" %in% names(susie_args)) {
     maxit <- susie_args$max_iter
     susie_args <- susie_args[setdiff(names(susie_args), "max_iter")]
   }
-  ## at 0.12.6 susieR introduced need for n = sample size
-  if (!("n" %in% names(susie_args))) {
-    susie_args <- c(list(n = exp_for_coloc$N), susie_args)
+
+  # Include sample size parameter if not already specified
+  # susie_args <- c(list(n = N_exp), susie_args)
+
+  # Set prior variance with regard to trait type and sdY
+  if (exp_type == "quant") {
+    susie_args <- c(list(prior_variance = (.15 / exp_sd)^2, estimate_prior_variance = FALSE), susie_args)
+  } else {
+    susie_args <- c(list(prior_variance = .2^2, estimate_prior_variance = FALSE), susie_args)
   }
 
+  # Iteratively run SuSiE until convergence or maximum iterations are reached
   while (!converged) {
-    message("running max iterations: ", maxit)
+    message("Running max iterations: ", maxit)
     res <- do.call(
       susie_rss,
       c(list(z = z, R = LD, max_iter = maxit), susie_args)
     )
-    converged <- res$converged # s_init=res; maxit=maxit*2
-    message("\tconverged: ", converged)
+    converged <- res$converged
+    message("\tConverged: ", converged)
     if (!converged && repeat_until_convergence == FALSE) {
       stop("susie_rss() did not converge in ", maxit, " iterations. Try running with run_until_convergence=TRUE")
     }
     if (!converged) {
       maxit <- maxit * 100
-    } # no point in half measures!
+    } # Increase iterations if not converged
   }
+
+  # Annotate SuSiE results and return
   susie.res <- annotate_susie(res, snp, LD)
 
   return(susie.res)
