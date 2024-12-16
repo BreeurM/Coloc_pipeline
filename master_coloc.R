@@ -40,7 +40,11 @@ ggplot(exp_raw, aes(x = pos.exposure, y= -log10(pval.exposure))) + geom_point()
 # Set broad manual window 
 exp_data <- exp_raw %>% filter(pos.exposure > 4.25e7 & pos.exposure < 4.3e7)
 
-
+# Another option if the lead variant is known
+lead_var <- "rs2744077"
+lead_pos <- exp_raw$pos.exposure[exp_raw$SNP == lead_var]
+width <- 250000
+exp_data <- exp_raw %>% filter(between(pos.exposure,lead_pos - width, lead_pos + width))
 
 ################################################################################ 
 # Load and format PanC data
