@@ -433,8 +433,8 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP,
 
   ## Step 4: Calculate Z-scores for exposure and outcome
   # Compute Z-scores: beta divided by the standard error
-  temp_dat_format$Z_exp <- temp_dat_format$beta.exposure / temp_dat_format$se.exposure
-  temp_dat_format$Z_out <- temp_dat_format$beta.outcome / temp_dat_format$se.outcome
+  temp_dat_format$Z_exp <- temp_dat_format$beta.exposure/temp_dat_format$se.exposure
+  temp_dat_format$Z_out <- temp_dat_format$beta.outcome/temp_dat_format$se.outcome
 
   ## Step 5: Generate the Z-Z plot
   # Use jitter to slightly shift points for better visualization
