@@ -159,6 +159,9 @@ format_dat <- function(dat, type = "exposure", snps = NA,
 #'
 #' Temporary files created during the analysis are automatically cleaned up. If the specified SNP
 #' is not found in the data, the function returns an empty data frame with the same structure as `snp_dat`.
+#'
+#' #' @author Karl Smith-Byrne
+#'
 find_proxy_snps <- function(plink_path = "plink",
                             bfile_prefix = "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3",
                             snp_dat,
@@ -293,6 +296,8 @@ find_proxy_snps <- function(plink_path = "plink",
 #' locally using PLINK. Any temporary files created during the computation are cleaned up
 #' after the LD matrix is generated. Columns or rows with excessive missing values are
 #' removed from the analytical matrix, ensuring the returned matrix is complete.
+#'
+#' #' @author Karl Smith-Byrne
 get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = T) {
   # Set the temporary directory
   temp_dir <- "Temp_dir/"
@@ -336,7 +341,6 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = T) {
 ##'                  or path to outcome data in csv
 ##'
 ##' @param window_size: window_size around SNP of interest, default = 1000kb
-
 extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
   # For now assume exp/out data stored in csv, TO BE CHANGED
 
@@ -365,31 +369,149 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 
 
 
+#' zz_plot Function
+#'
+#' This function generates a Z-Z scatter plot for two traits (exposure and outcome), where SNPs (Single Nucleotide Polymorphisms)
+#' are color-coded based on their linkage disequilibrium (LD) with a lead SNP. Additionally, the coloc SNP (a key SNP for colocalization analysis) is highlighted.
+#'
+#' @param LD_Mat Dataframe containing the linkage disequilibrium (LD) matrix with SNPs as row names.
+#' @param lead_SNP Character string indicating the lead SNP to be labeled.
+#' @param Harm_dat Dataframe containing harmonized data for SNPs, including beta and standard errors for exposure and outcome.
+#' @param coloc_SNP Character string specifying the coloc SNP (key SNP to highlight in the plot).
+#' @param exposure_name Character string for the name of the exposure trait (default: unique value from Harm_dat's "exposure" column).
+#' @param outcome_name Character string for the name of the outcome trait (default: unique value from Harm_dat's "outcome" column).
+#'
+#' @return A ggplot object representing the Z-Z plot where SNPs are color-coded based on their LD with the coloc SNP,
+#' and the coloc and lead SNPs are highlighted.
+#'
+#' @examples
+#' zz_plot(LD_Mat, lead_SNP = "rs123", Harm_dat, coloc_SNP = "rs456")
+#'
+#' @author Karl Smith-Byrne
+#' 
+zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP,
+                    exposure_name = "exposure",
+                    outcome_name = "outcome") {
+  
+  ## Step 1: Prepare LD Data
+  # Add a column 'RS_number' to the LD matrix that stores SNP identifiers
+  LD_Mat$RS_number <- rownames(LD_Mat)
+
+  # Subset the LD matrix to retain only the coloc_SNP column for plotting
+  LD_TEMP <- LD_Mat[, c("RS_number", coloc_SNP)]
+
+  ## Step 2: Merge LD information with harmonized data
+  # Merge the harmonized data (Harm_dat) with the LD data, matching SNP identifiers
+  temp_dat_format <- merge(Harm_dat, LD_TEMP, by.x = "SNP", by.y = "RS_number", all.x = TRUE)
+
+  # Square the LD values to calculate r^2 for the coloc SNP
+  temp_dat_format[, coloc_SNP] <- temp_dat_format[, coloc_SNP]^2
+
+  ## Step 3: Handle missing LD values and define LD color categories
+  # Replace NA LD values with 0 for consistency
+  temp_dat_format[, coloc_SNP] <- ifelse(is.na(temp_dat_format[, coloc_SNP]), 0, temp_dat_format[, coloc_SNP])
+
+  # Create a new 'LD' column categorising LD strength into bins
+  temp_dat_format$LD <- dplyr::case_when(
+    temp_dat_format[, coloc_SNP] > 0 & temp_dat_format[, coloc_SNP] <= 0.2 ~ "LD < 0.2",
+    temp_dat_format[, coloc_SNP] > 0.2 & temp_dat_format[, coloc_SNP] <= 0.4 ~ "0.2 > LD < 0.4",
+    temp_dat_format[, coloc_SNP] > 0.4 & temp_dat_format[, coloc_SNP] <= 0.6 ~ "0.4 > LD < 0.6",
+    temp_dat_format[, coloc_SNP] > 0.6 & temp_dat_format[, coloc_SNP] <= 0.8 ~ "0.6 > LD < 0.8",
+    temp_dat_format[, coloc_SNP] > 0.8 ~ "LD > 0.8",
+    TRUE ~ "No LD" # Default case when none of the above conditions are met
+  )
+  
+
+  # Replace any remaining NA values in the 'LD' column with "No LD"
+  temp_dat_format$LD <- ifelse(is.na(temp_dat_format$LD), "No LD", temp_dat_format$LD)
+
+  # Assign the "Lead SNP" label to the coloc SNP
+  temp_dat_format$LD <- ifelse(temp_dat_format$SNP == coloc_SNP, "Lead SNP", temp_dat_format$LD)
+
+  # Create a flag to highlight the coloc SNP
+  temp_dat_format <- temp_dat_format %>% mutate(coloc_flag = case_when(SNP == coloc_SNP ~ "Yes", TRUE ~ "No"))
+
+  ## Step 4: Calculate Z-scores for exposure and outcome
+  # Compute Z-scores: beta divided by the standard error
+  temp_dat_format$Z_exp <- temp_dat_format$beta.exposure / temp_dat_format$se.exposure
+  temp_dat_format$Z_out <- temp_dat_format$beta.outcome / temp_dat_format$se.outcome
+
+  ## Step 5: Generate the Z-Z plot
+  # Use jitter to slightly shift points for better visualization
+  pos <- position_jitter(width = 0.5, seed = 1)
+
+  # Plot the Z-scores with SNPs color-coded by LD category
+  plot <- temp_dat_format %>%
+    mutate(LD = fct_reorder(LD, get(coloc_SNP))) %>% # Reorder LD levels for better display
+    ggplot(aes(Z_exp, Z_out, color = LD)) +
+    geom_point(size = 2) + # Add scatter points
+    theme_bw() + # Use a clean, black-and-white theme
+    xlab(paste(exposure_name, " Z-score", sep = "")) +
+    ylab(paste(outcome_name, " Z-score", sep = "")) +
+    ggtitle(paste("Z-Z Locus Plot for: ", exposure_name, " and ", outcome_name, sep = "")) +
+    theme(
+      axis.text = element_text(hjust = 1, size = 20),
+      plot.title = element_text(hjust = 0.5, size = 22, face = "bold"),
+      axis.title = element_text(size = 25, face = "bold"),
+      legend.text = element_text(size = 15),
+      legend.title = element_text(size = 20, face = "bold")
+    ) +
+    # Add labels to the lead SNP and coloc SNP
+    geom_label_repel(
+      size = 6,
+      data = temp_dat_format %>% filter(SNP %in% c(lead_SNP, coloc_SNP)),
+      aes(label = SNP), show.legend = FALSE
+    ) +
+    # Customize legend title and colors for LD categories
+    labs(color = "LD with Lead Coloc SNP") +
+    scale_color_manual(values = c(
+      "No LD" = "#D3D3D3",
+      "LD < 0.2" = "#225EA8",
+      "0.2 > LD < 0.4" = "#41B6C4",
+      "0.4 > LD < 0.6" = "#7FCDBB",
+      "0.6 > LD < 0.8" = "#FE9929",
+      "LD > 0.8" = "#8856A7",
+      "Lead SNP" = "#F768A1"
+    ))
+
+  ## Step 6: Return the final plot
+  return(plot)
+}
+
+
+
 #' Perform Colocalization Analysis with SuSiE
 #'
 #' This function performs colocalization analysis using the SuSiE method for a given pair of exposure and outcome datasets.
 #' It computes Bayes factors for each dataset, aligns the SNPs and alleles with an optional LD matrix, and integrates the results using SuSiE.
+#' 
 #'
-#' @param exp_data      Either a data frame or a file path to the exposure dataset.
-#'                      The dataset must be formatted as required by TwoSampleMR
-#'                      and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
-#' @param N_exp         An integer specifying the sample size for the exposure dataset.
-#' @param exp_type      A string specifying the type of exposure study.
-#'                      Either `"quant"` (quantitative trait) or `"cc"` (case-control).
-#' @param exp_sd        A numeric value specifying the std of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
+#' @param exp_data     Either a data frame or a file path to the exposure dataset.
+#'                     The dataset must be formatted as required by TwoSampleMR
+#'                     and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
+#' @param N_exp        An integer specifying the sample size for the exposure dataset.
+#' @param exp_type     A string specifying the type of exposure study.
+#'                     Either `"quant"` (quantitative trait) or `"cc"` (case-control).
+#' @param exp_sd       A numeric value specifying the std of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
 #'
-#' @param out_data      Either a data frame or a file path to the outcome dataset.
-#'                      The dataset must be formatted as required by TwoSampleMR
-#'                      and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
-#' @param N_out         An integer specifying the sample size for the outcome dataset.
-#' @param out_type      A string specifying the type of outcome study.
-#'                      Either `"quant"` (quantitative trait) or `"cc"` (case-control).
-#' @param out_sd        An numeric value specifying the std of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
+#' @param out_data     Either a data frame or a file path to the outcome dataset.
+#'                     The dataset must be formatted as required by TwoSampleMR
+#'                     and include at least the columns: `SNP`, `beta`, `se`, and `eaf`.
+#' @param N_out        An integer specifying the sample size for the outcome dataset.
+#' @param out_type     A string specifying the type of outcome study.
+#'                     Either `"quant"` (quantitative trait) or `"cc"` (case-control).
+#' @param out_sd       An numeric value specifying the std of the trait for quantitative studies or the proportion of cases for case-control studies. Default is `1`.
 #'
-#' @param LD_matrix     Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix.
-#'                      If `NULL`, the LD matrix is computed from 1000G using the `get_ld_matrix` function.
-#' @param plink_loc     A string containing path to plink file, if needed to extract LD matrix. default is `"plink"`
-#' @param bfile_loc     A string with location of 1000G bfile.
+#' @param LD_matrix    Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix.
+#'                     If `NULL`, the LD matrix is computed from 1000G using the `get_ld_matrix` function.
+#' @param plink_loc    A string containing path to plink file, if needed to extract LD matrix. default is `"plink"`
+#' @param bfile_loc    A string with location of 1000G bfile.
+#' 
+#' @param zz_plot      Whether to output Z-Z locus plot. Default is `FALSE`.
+#' @param lead_snp     A str containing the rsID of the lead snp. Required for the Z-Z locus plot.
+#'                     Default is `NULL`.
+#' @param coloc_snp    A str containing the rsID of the coloc snp. Required for the Z-Z locus plot.
+#'                     Default is `NULL`. Will be automatically set up to match lead_snp if lead_snp is provided.
 #'
 #' @param exp_coverage Dictates the strength of the signal that susie is able to detect.
 #'                     Default is `.95`, values closer to 0 allow for weaker signals to be detected
@@ -400,7 +522,8 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 #'         If SuSiE fails to converge for either dataset, the function returns `NULL`.
 main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                        out_data, N_out, out_type, out_sd = 1,
-                       LD_matrix = NULL, plink_loc = "plink", bfile_loc,
+                       LD_matrix = NULL, plink_loc = "plink", bfile_loc = NULL,
+                       zz_plot = FALSE, lead_snp = NULL, coloc_snp = NULL,
                        exp_coverage = .95, out_coverage = .95) {
   # Check input consistency
 
@@ -487,13 +610,28 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         eaf.exposure, eaf.outcome
       )
   }
-
-  # Prepare data for SuSiE colocalization analysis
-
+  
   # Remove alleles from LD matrix column names for cross ref with ext/out data
   colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
   rownames(LD_matrix) <- colnames(LD_matrix)
+  
+  # Plot Z-Z locus plot if required
+  zz = NULL
+  if(zz_plot){
+    if (is.null(lead_snp)){
+      stop("Z-Z locus plot is requested but no lead snp is provided. Please provide the lead snp rsID.")
+    }else{
+      if (is.null(coloc_snp)){
+        coloc_snp <- lead_snp
+      }
+      zz <- zz_plot(as.data.frame(LD_matrix), 
+                    lead_snp, 
+                    harm_data, 
+                    coloc_snp)
+    }
+  }
 
+  # Prepare data for SuSiE colocalization analysis
   exp_for_coloc <- harm_data %>%
     select(
       beta.exposure,
@@ -605,7 +743,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     ),
     flags = list(
       exp_alignment_check = exp_qc,
-      out_alignment_check = out_qc
+      out_alignment_check = out_qc,
+      zz_plot = zz
     )
   ))
 }
