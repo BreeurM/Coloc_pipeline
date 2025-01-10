@@ -414,9 +414,9 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP,
   # Create a new 'LD' column categorising LD strength into bins
   temp_dat_format$LD <- dplyr::case_when(
     temp_dat_format[, coloc_SNP] > 0 & temp_dat_format[, coloc_SNP] <= 0.2 ~ "LD < 0.2",
-    temp_dat_format[, coloc_SNP] > 0.2 & temp_dat_format[, coloc_SNP] <= 0.4 ~ "0.2 > LD < 0.4",
-    temp_dat_format[, coloc_SNP] > 0.4 & temp_dat_format[, coloc_SNP] <= 0.6 ~ "0.4 > LD < 0.6",
-    temp_dat_format[, coloc_SNP] > 0.6 & temp_dat_format[, coloc_SNP] <= 0.8 ~ "0.6 > LD < 0.8",
+    temp_dat_format[, coloc_SNP] > 0.2 & temp_dat_format[, coloc_SNP] <= 0.4 ~ "0.2 < LD < 0.4",
+    temp_dat_format[, coloc_SNP] > 0.4 & temp_dat_format[, coloc_SNP] <= 0.6 ~ "0.4 < LD < 0.6",
+    temp_dat_format[, coloc_SNP] > 0.6 & temp_dat_format[, coloc_SNP] <= 0.8 ~ "0.6 < LD < 0.8",
     temp_dat_format[, coloc_SNP] > 0.8 ~ "LD > 0.8",
     TRUE ~ "No LD" # Default case when none of the above conditions are met
   )
@@ -433,8 +433,8 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP,
 
   ## Step 4: Calculate Z-scores for exposure and outcome
   # Compute Z-scores: beta divided by the standard error
-  temp_dat_format$Z_exp <- temp_dat_format$beta.exposure / temp_dat_format$se.exposure
-  temp_dat_format$Z_out <- temp_dat_format$beta.outcome / temp_dat_format$se.outcome
+  temp_dat_format$Z_exp <- temp_dat_format$beta.exposure/temp_dat_format$se.exposure
+  temp_dat_format$Z_out <- temp_dat_format$beta.outcome/temp_dat_format$se.outcome
 
   ## Step 5: Generate the Z-Z plot
   # Use jitter to slightly shift points for better visualization
