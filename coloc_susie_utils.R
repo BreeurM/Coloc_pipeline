@@ -26,6 +26,25 @@
 #' - Colocalisation results with posterior probabilities and fine-mapping outputs.
 
 
+#' Get Available Memory on the System
+#'
+#' This helper function determines the total available memory on the system,
+#' which can be used to dynamically allocate resources for memory-intensive tasks.
+#'
+#' @return Numeric value representing the total memory in megabytes (MB)
+get_available_memory <- function() {
+  if (Sys.info()["sysname"] == "Windows") {
+    # On Windows, estimate memory (simplified, may vary by system)
+    # Define the input
+    system_output <- system("wmic OS get TotalVisibleMemorySize /Value", intern = TRUE)
+    as.numeric(sub(".*=(\\d+).*", "\\1", system_output[3])) / 1024
+  } else {
+    # On Unix-based systems, use 'free' command
+    as.numeric(system("free -m | awk '/Mem:/ {print $2}'", intern = TRUE))
+  }
+}
+
+
 #' Read and format exposure or outcome data
 #' Checks and organises columns for use with MR or enrichment tests.
 #' Infers p-values when possible from beta and se.
@@ -273,17 +292,15 @@ find_proxy_snps <- function(plink_path = "plink",
 
 
 
-#' Generate a Linkage Disequilibrium (LD) Matrix
+#' Generate a Linkage Disequilibrium (LD) Matrix from 1000G
 #'
 #' This function calculates a linkage disequilibrium (LD) matrix for a given list of RSIDs
-#' using PLINK and a provided bfile. It also formats the LD matrix and returns it in two forms:
-#' a cleaned matrix for analysis and a data frame for plotting.
+#' using https://mrcieu.github.io/TwoSampleMR/reference/ld_matrix.html.
+#' It also formats the LD matrix and returns it in two forms: a cleaned matrix for analysis and a data frame for plotting.
 #'
 #' @param rsid_list    A character vector of RSIDs for which to compute the LD matrix.
-#' @param plink_loc    A string specifying the path to the PLINK binary.
-#' @param bfile_loc    A string specifying the path to the PLINK bfile (prefix of binary files).
 #' @param with_alleles A logical value indicating whether allele information should be included
-#' in the LD matrix. Default is `FALSE`.
+#' in the LD matrix. Default is `TRUE`.
 #'
 #' @return A list with two elements:
 #' \itemize{
@@ -297,25 +314,10 @@ find_proxy_snps <- function(plink_path = "plink",
 #' after the LD matrix is generated. Columns or rows with excessive missing values are
 #' removed from the analytical matrix, ensuring the returned matrix is complete.
 #'
-#' #' @author Karl Smith-Byrne
-get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = T) {
-  # Set the temporary directory
-  temp_dir <- "Temp_dir/"
-  tempdir(temp_dir)
-
+#' @author K. Smith-Byrne, M. Breeur
+get_ld_matrix_1000g <- function(rsid_list, with_alleles = T) {
   # Compute the LD matrix using the ieugwasr package
-  LD_Full <- ieugwasr::ld_matrix_local(rsid_list,
-    bfile = bfile_loc,
-    plink_bin = plink_loc,
-    with_alleles = with_alleles
-  )
-
-  # Clean up temporary files
-  temp_dir <- tempdir()
-  files <- list.files(temp_dir)
-  if (length(files) > 0) {
-    unlink(file.path(temp_dir, files), recursive = TRUE)
-  }
+  LD_Full <- ieugwasr::ld_matrix(rsid_list, with_alleles = with_alleles)
 
   # Format the LD matrix for analysis
   LD <- LD_Full[, !colnames(LD_Full) %in% names(which(colSums(is.na(as.matrix(LD_Full))) > dim(LD_Full) - 1))]
@@ -329,6 +331,110 @@ get_ld_matrix <- function(rsid_list, plink_loc, bfile_loc, with_alleles = T) {
   # Return the results
   return(list(LD_Anal = LD, LD_Plot = LD_Full))
 }
+
+
+#' Compute Linkage Disequilibrium (LD) Matrix from UK Biobank Data
+#'
+#' This function computes the LD matrix for a given list of SNPs (rsIDs) using PLINK and UK Biobank data.
+#' It supports allele annotation for the LD matrix and automatically cleans up temporary files after computation.
+#'
+#' @param rsid_list    A character vector of SNP rsIDs for which the LD matrix is to be calculated.
+#' @param plink_loc    A string specifying the path to the PLINK executable.
+#' @param bfile_loc    A string specifying the path to the PLINK binary file prefix ("bfile").
+#' @param plink_memory A integer with the memory in MB allocated to plink
+#'                     Default is `NULL`, allocates 75% of the memory to plink.
+#' @param with_alleles Logical (default = TRUE). If TRUE, row and column names in the resulting matrix will include allele information (rsID_allele1_allele2). If FALSE, only rsIDs are used.
+#'
+#' @return A square LD matrix (as a numeric matrix) where rows and columns correspond to the SNPs specified in `rsid_list`. The matrix contains pairwise LD values (R²).
+#'
+#' @details
+#' The function follows these steps:
+#'
+#' 1. **Identify Shell Type**: Determines whether the system shell is "cmd" (Windows) or "sh" (Unix-based).
+#' 2. **Create Temporary File**: Writes the `rsid_list` to a temporary file for input into PLINK.
+#' 3. **Generate BIM File**:
+#'    - Constructs a command to run PLINK with `--make-just-bim`, filtering the binary files for SNPs in `rsid_list`.
+#'    - Executes the command and reads the resulting BIM file, which contains SNP metadata.
+#' 4. **Compute LD Matrix**:
+#'    - Builds another PLINK command to calculate the LD matrix using `--r square`.
+#'    - Runs the command and reads the resulting LD matrix into R as a numeric matrix.
+#' 5. **Annotate Matrix**:
+#'    - If `with_alleles = TRUE`, sets matrix row and column names to include rsID and allele information (e.g., rsID_A1_A2).
+#'    - Otherwise, uses only the rsID for row and column names.
+#' 6. **Clean Up**: Deletes all temporary files created during the process.
+#'
+#' @examples
+#' # Example usage:
+#' rsid_list <- c("rs123", "rs456", "rs789")
+#' plink_loc <- "/path/to/plink"
+#' bfile_loc <- "/path/to/bfile"
+#' ld_matrix <- get_ld_matrix_UKBB(rsid_list, plink_loc, bfile_loc, with_alleles = TRUE)
+#'
+#' @importFrom utils read.table write.table
+#' @importFrom stats as.matrix
+#' @author K. Smith-Byrne, M. Breeur
+#' @export
+get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory = NULL, with_alleles = TRUE) {
+  # Determine shell type based on operating system
+  shell <- ifelse(Sys.info()["sysname"] == "Windows", "cmd", "sh")
+
+  # Create a temporary file to store rsID list
+  fn <- tempfile()
+  write.table(data.frame(rsid_list),
+    file = fn, row.names = FALSE,
+    col.names = FALSE, quote = FALSE
+  )
+
+  # Calculate memory allocation for PLINK
+  if (is.null(plink_memory)) {
+    # Use 75% of available memory
+    total_memory <- get_available_memory()
+    plink_memory <- as.character(floor(total_memory * 0.75))
+  } else {
+    plink_memory <- as.character(plink_memory)
+  }
+
+  # Generate BIM file with PLINK
+  fun1 <- paste0(
+    shQuote(plink_loc, type = shell), " --bfile ",
+    shQuote(bfile_loc, type = shell), " --extract ", shQuote(fn, type = shell),
+    " --make-just-bim --keep-allele-order --out ", shQuote(fn, type = shell),
+    " --memory ", plink_memory
+  )
+  system(fun1, ignore.stdout = TRUE, ignore.stderr = TRUE)
+
+  # Read the BIM file containing SNP metadata
+  bim <- read.table(paste0(fn, ".bim"), stringsAsFactors = FALSE)
+
+  # Compute LD matrix with PLINK
+  fun2 <- paste0(
+    shQuote(plink_loc, type = shell), " --bfile ",
+    shQuote(bfile_loc, type = shell), " --extract ", shQuote(fn, type = shell),
+    " --r square --keep-allele-order --out ", shQuote(fn, type = shell),
+    " --memory ", plink_memory
+  )
+  system(fun2, ignore.stdout = TRUE, ignore.stderr = TRUE)
+
+  # Read the LD matrix into R as a numeric matrix
+  res <- read.table(paste0(fn, ".ld"), header = FALSE) %>% as.matrix()
+
+  # Annotate matrix with allele information if specified
+  if (with_alleles) {
+    rownames(res) <- colnames(res) <- paste(bim$V2, bim$V5, bim$V6, sep = "_")
+  } else {
+    rownames(res) <- colnames(res) <- bim$V2
+  }
+
+  # Clean up temporary files
+  file.remove(list.files(tempdir(), pattern = ".ld", recursive = TRUE, full.names = TRUE))
+  file.remove(list.files(tempdir(), pattern = ".bim", recursive = TRUE, full.names = TRUE))
+  file.remove(list.files(tempdir(), pattern = ".log", recursive = TRUE, full.names = TRUE))
+  file.remove(list.files(tempdir(), pattern = ".nosex", recursive = TRUE, full.names = TRUE))
+
+  return(res)
+}
+
+
 
 
 
@@ -375,7 +481,7 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 #' are color-coded based on their linkage disequilibrium (LD) with a lead SNP. Additionally, the coloc SNP (a key SNP for colocalization analysis) is highlighted.
 #'
 #' @param LD_Mat Dataframe containing the linkage disequilibrium (LD) matrix with SNPs as row names.
-#' @param lead_SNP Character string indicating the lead SNP to be labeled.
+#' @param lead_SNP Character string indicating the lead SNP to be labeled. **Default is `NULL` until I figure out what it was for.**
 #' @param Harm_dat Dataframe containing harmonized data for SNPs, including beta and standard errors for exposure and outcome.
 #' @param coloc_SNP Character string specifying the coloc SNP (key SNP to highlight in the plot).
 #' @param exposure_name Character string for the name of the exposure trait (default: unique value from Harm_dat's "exposure" column).
@@ -387,12 +493,11 @@ extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
 #' @examples
 #' zz_plot(LD_Mat, lead_SNP = "rs123", Harm_dat, coloc_SNP = "rs456")
 #'
-#' @author Karl Smith-Byrne
-#' 
-zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP,
+#' @author K. Smith-Byrne
+#'
+zz_plot <- function(LD_Mat, lead_SNP = NULL, Harm_dat, coloc_SNP,
                     exposure_name = "exposure",
                     outcome_name = "outcome") {
-  
   ## Step 1: Prepare LD Data
   # Add a column 'RS_number' to the LD matrix that stores SNP identifiers
   LD_Mat$RS_number <- rownames(LD_Mat)
@@ -420,7 +525,7 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP,
     temp_dat_format[, coloc_SNP] > 0.8 ~ "LD > 0.8",
     TRUE ~ "No LD" # Default case when none of the above conditions are met
   )
-  
+
 
   # Replace any remaining NA values in the 'LD' column with "No LD"
   temp_dat_format$LD <- ifelse(is.na(temp_dat_format$LD), "No LD", temp_dat_format$LD)
@@ -433,8 +538,8 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP,
 
   ## Step 4: Calculate Z-scores for exposure and outcome
   # Compute Z-scores: beta divided by the standard error
-  temp_dat_format$Z_exp <- temp_dat_format$beta.exposure/temp_dat_format$se.exposure
-  temp_dat_format$Z_out <- temp_dat_format$beta.outcome/temp_dat_format$se.outcome
+  temp_dat_format$Z_exp <- temp_dat_format$beta.exposure / temp_dat_format$se.exposure
+  temp_dat_format$Z_out <- temp_dat_format$beta.outcome / temp_dat_format$se.outcome
 
   ## Step 5: Generate the Z-Z plot
   # Use jitter to slightly shift points for better visualization
@@ -484,7 +589,7 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP,
 #'
 #' This function performs colocalization analysis using the SuSiE method for a given pair of exposure and outcome datasets.
 #' It computes Bayes factors for each dataset, aligns the SNPs and alleles with an optional LD matrix, and integrates the results using SuSiE.
-#' 
+#'
 #'
 #' @param exp_data     Either a data frame or a file path to the exposure dataset.
 #'                     The dataset must be formatted as required by TwoSampleMR
@@ -505,8 +610,9 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP,
 #' @param LD_matrix    Either `NULL`, a precomputed LD matrix, or a file path to a CSV file containing the LD matrix.
 #'                     If `NULL`, the LD matrix is computed from 1000G using the `get_ld_matrix` function.
 #' @param plink_loc    A string containing path to plink file, if needed to extract LD matrix. default is `"plink"`
-#' @param bfile_loc    A string with location of 1000G bfile.
-#' 
+#' @param bfile_loc    A string with location of bfile used for LD matrix computation.
+#'                     If `NULL`, LD matrix will be queried from 1000G via TwoSampleMR package
+#'
 #' @param zz_plot      Whether to output Z-Z locus plot. Default is `FALSE`.
 #' @param lead_snp     A str containing the rsID of the lead snp. Required for the Z-Z locus plot.
 #'                     Default is `NULL`.
@@ -557,7 +663,15 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   # Import LD_matrix if provided as file paths, or import from 1000G if NULL
   if (is.null(LD_matrix)) {
-    LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
+    if (is.null(bfile_loc) | is.null(plink_loc)) {
+      warning("Either bfile_loc or plink_loc is missing. Getting LD matrix from 1000G in TwoSampleMR.")
+      LD_matrix <-tryCatch(expr = {get_ld_matrix_1000g(harm_data$SNP, with_alleles = T)$LD_Anal}, error = function(e) {
+        stop("Window too large, SNP list must be smaller than 500. Try reducing window or provide a local ld reference.")
+        NULL
+      })
+    } else {
+      LD_matrix <- get_ld_matrix_from_bim(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)
+    }
   } else {
     if (is.character(LD_matrix)) {
       LD_matrix <- read.csv(LD_matrix)
@@ -565,8 +679,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   }
 
   # Check for allele information in the LD matrix, and align if possible
-  if (!(all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
-    all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 3] %in% c("A", "C", "T", "G")))) {
+  if (!(all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 2])) &
+    all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 3])))) {
     # SNP names in the LD_matrix do not contain allele information, or their format is wrong
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Zscores VS observed Zscores")
     harm_data <- harm_data %>%
@@ -610,26 +724,10 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         eaf.exposure, eaf.outcome
       )
   }
-  
+
   # Remove alleles from LD matrix column names for cross ref with ext/out data
   colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
   rownames(LD_matrix) <- colnames(LD_matrix)
-  
-  # Plot Z-Z locus plot if required
-  zz = NULL
-  if(zz_plot){
-    if (is.null(lead_snp)){
-      stop("Z-Z locus plot is requested but no lead snp is provided. Please provide the lead snp rsID.")
-    }else{
-      if (is.null(coloc_snp)){
-        coloc_snp <- lead_snp
-      }
-      zz <- zz_plot(as.data.frame(LD_matrix), 
-                    lead_snp, 
-                    harm_data, 
-                    coloc_snp)
-    }
-  }
 
   # Prepare data for SuSiE colocalization analysis
   exp_for_coloc <- harm_data %>%
@@ -671,8 +769,21 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   out_for_coloc$N <- N_out
   out_for_coloc$LD <- LD_matrix[out_for_coloc$snp, out_for_coloc$snp]
 
-  # Run vanilla colocalisation as a warm up
+  # Run vanilla colocalisation as a warm up and plot Z-Z locus plot if required
   ABF <- coloc.abf(exp_for_coloc, out_for_coloc)
+
+  zz <- NULL
+  if (zz_plot) {
+    if (is.null(coloc_snp)) {
+      coloc_snp <- ABF$results$snp[which.max(ABF$results$SNP.PP.H4)]
+    }
+    zz <- zz_plot(
+      as.data.frame(LD_matrix),
+      lead_snp,
+      harm_data,
+      coloc_snp
+    )
+  }
 
   # Flags for faulty allele alignment
   exp_qc <- list(
@@ -745,7 +856,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       exp_alignment_check = exp_qc,
       out_alignment_check = out_qc,
       zz_plot = zz
-    )
+    ),
+    ld_mat = LD_matrix
   ))
 }
 

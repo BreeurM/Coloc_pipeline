@@ -34,8 +34,9 @@ sum_stat_file <- file_list[grepl(snp_dat$SNP, file_list) &
                              grepl(str_replace_all(paste0(snp_dat$gene.exposure, "_"), "-", "-"), file_list)]
 
 ############ Define the region to keep
-bfile_loc <- "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3"
-plink_loc <- "plink"
+bfile_loc_1000g <- "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3"
+bfile_loc_ukbb  <- "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered"
+plink_loc       <- "plink"
 
 window_size_kb <- 1000
 
@@ -43,7 +44,7 @@ cat("Extracting SNPs in a", window_size_kb, "kb window around", snp_dat$SNP, "\n
 # Execute PLINK command
 extracted_snps_file <- tempfile("extracted_snps", fileext = ".txt")
 cmd <- paste(
-  plink_loc, "--bfile", bfile_loc,
+  plink_loc, "--bfile", bfile_loc_1000g,
   "--snp", snp_dat$SNP,
   "--window", window_size_kb,
   "--write-snplist",
@@ -78,11 +79,11 @@ prot_region <- format_data(prot_region, snps = extracted_snps$SNP,
                                         eaf_col = "A1FREQ", min_pval = NA)
 
 
-test <- finemap_susie(exp_data = prot_region,
-                      N_exp = 34000,
-                      exp_type = "quant",
-                      LD_matrix = LD_matrix,
-                      max_iter = 1000)
+# test <- finemap_susie(exp_data = prot_region,
+#                       N_exp = 34000,
+#                       exp_type = "quant",
+#                       LD_matrix = LD_matrix,
+#                       max_iter = 1000)
 
 # harm_data <- prot_region
 # 
@@ -98,7 +99,9 @@ test <- finemap_susie(exp_data = prot_region,
 #     other_allele.exposure
 #   ))
 # 
-# LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)$LD_Anal
+# #LD_matrix <- get_ld_matrix_1000g(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc_1000g, with_alleles = T)$LD_Anal
+# LD_matrix <- get_ld_matrix_from_bim(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc_1000g, with_alleles = T)
+# 
 # 
 # LD_alignment <- data.frame(
 #   SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
@@ -154,6 +157,6 @@ test <- finemap_susie(exp_data = prot_region,
 # cs1=s1$sets
 # idx1=cs1$cs_index
 # bf1=s1$lbf_variable[idx1,,drop=FALSE]
-# 
-# 
-# 
+
+
+
