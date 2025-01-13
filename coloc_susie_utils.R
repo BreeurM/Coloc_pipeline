@@ -1018,7 +1018,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   }
 
   # Include sample size parameter if not already specified
-  # susie_args <- c(list(n = N_exp), susie_args)
+  susie_args <- c(list(n = N_exp), susie_args)
 
   # Set prior variance with regard to trait type and sdY
   if (exp_type == "quant") {
