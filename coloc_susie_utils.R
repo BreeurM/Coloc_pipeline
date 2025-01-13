@@ -856,8 +856,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       exp_alignment_check = exp_qc,
       out_alignment_check = out_qc,
       zz_plot = zz
-    ),
-    ld_mat = LD_matrix
+    )
   ))
 }
 
