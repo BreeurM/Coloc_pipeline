@@ -13,150 +13,106 @@ source("~/Code/Coloc_pipeline/coloc_susie_utils.R")
 
 ########## Digging deeper into the runsusie outputs
 
-setwd("~/Code/MR_EPIC")
-can <- "Prostate" ####### TO CHANGE
-file_path <- paste0("harmonised_data/", can, "/")
-res_file <- paste0("res/", can, ".csv")
+
 sum_stat_path <- "N:/EPIC_genetics/Annotated_windows/Annotated_windows/"
 file_list <- list.files(sum_stat_path, full.names = T, recursive = T)
 
-harm_dat <- fread(paste0(file_path, "All_SNPs.csv"))
-res_mr <- read_csv(res_file)
-
+#### Protein first
 
 prot <- "MSMB"
+restricted_file_list <- file_list[grepl(prot, file_list)]
+file_name <- "N:/EPIC_genetics/Annotated_windows/Annotated_windows/MSMB_P08118_OID20275/MSMB_P08118_OID20275_rs10993994.rsids.csv"
+  exp_raw <- read_csv(file_name)
+# Formatting to ensure that column names are consistent
+exp_raw <- format_data(exp_raw,
+  snp_col = "RSID", beta_col = "BETA",
+  se_col = "SE", log_pval = T, pval_col = "LOG10P",
+  effect_allele_col = "ALLELE1",
+  other_allele_col = "ALLELE0",
+  pos_col = "GENPOS", chr_col = "CHROM", eaf_col = "A1FREQ", min_pval = NA
+)
+# Find lead variant and extract region around it
 
-# Get the IV and info on the gene.exposure
-res_prot <- res_mr %>% filter(Assay == prot & analysis == "Cis")
-snp_dat <- harm_dat %>% filter(SNP == res_prot$method[which.min(res_prot$p)] &
-                                 exposure == prot)
-sum_stat_file <- file_list[grepl(snp_dat$SNP, file_list) &
-                             grepl(str_replace_all(paste0(snp_dat$gene.exposure, "_"), "-", "-"), file_list)]
+# Find lead variants
+temp <- exp_raw$pos.exposure[exp_raw$pval.exposure == min(exp_raw$pval.exposure)]
+cat("Potential lead variants span a range of", max(temp) - min(temp), "kb \n")
 
-############ Define the region to keep
-bfile_loc_1000g <- "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3"
-bfile_loc_ukbb  <- "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered"
-plink_loc       <- "plink"
+ggplot(exp_raw, aes(x = pos.exposure, y = -log10(pval.exposure))) +
+  geom_point()
 
-window_size_kb <- 1000
+# Set broad manual window
+# exp_data <- exp_raw %>% filter(pos.exposure > 4.25e7 & pos.exposure < 4.3e7)
 
-cat("Extracting SNPs in a", window_size_kb, "kb window around", snp_dat$SNP, "\n")
-# Execute PLINK command
-extracted_snps_file <- tempfile("extracted_snps", fileext = ".txt")
-cmd <- paste(
-  plink_loc, "--bfile", bfile_loc_1000g,
-  "--snp", snp_dat$SNP,
-  "--window", window_size_kb,
-  "--write-snplist",
-  "--out", extracted_snps_file,
-  "--allow-no-sex"
+# Another option if the lead variant is known
+lead_var <- "rs10993994"
+lead_pos <- exp_raw$pos.exposure[exp_raw$SNP == lead_var]
+width <- 250000
+exp_data <- exp_raw %>% filter(between(pos.exposure, lead_pos - width, lead_pos + width))
+
+
+exp_susie <- finemap_susie(
+  exp_data = exp_data,
+  N_exp = 34000,
+  exp_type = "quant",
+  LD_matrix = NULL, 
+  plink_loc = "plink", 
+  bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
+  max_iter = 1000
 )
 
-system(cmd, intern = TRUE, ignore.stderr = FALSE)
+###### Cancer second
 
-# Read extracted SNPs list with tryCatch
-extracted_snps <- tryCatch(
-  {
-    read.table(paste(extracted_snps_file, ".snplist", sep = ""), header = FALSE, col.names = "SNP")
-  },
-  error = function(e) {
-    message("An error occurred while reading the extracted SNPs file. Returning an empty data.frame.")
-    data.frame()
-  }
+rm(list = setdiff(ls(), "exp_susie"))
+# to make sure the two parts are independent
+
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(coloc)
+library(susieR)
+library(TwoSampleMR)
+
+setwd("~/Code/Coloc_pipeline")
+source("~/Code/Coloc_pipeline/coloc_susie_utils.R")
+
+
+out_raw <- fread("N:/EPIC_genetics/Cancer_sumstats/ELLIPSE_V2_META_EUROPEAN_Prostate_012121.txt")
+out_raw <- out_raw %>% filter(!is.na(SNP_Id))
+
+lead_var <- "rs10993994"
+lead_pos <- out_raw$Position[out_raw$SNP_Id == lead_var]
+width <- 25000
+out_raw <- out_raw %>% filter(between(Position, lead_pos - width, lead_pos + width))
+
+sum(out_raw$EA != out_raw$Allele_1)
+# [1] 0
+
+out_data <- TwoSampleMR::format_data(data.frame(out_raw),
+                                     chr_col = "Chromosome",
+                                     pos_col = "Position",
+                                     snp_col = "SNP_Id",
+                                     beta_col = "Estimate_Effect",
+                                     se_col = "SE",
+                                     pval_col = "P_value",
+                                     log_pval = FALSE,
+                                     eaf_col = "EAF_Control",
+                                     effect_allele_col = "Allele_1",
+                                     other_allele_col = "Allele_2")
+
+
+# Remove snps for which eaf is missing
+
+out_data <- out_data %>% filter(!is.na(eaf.exposure))
+
+
+out_susie <- finemap_susie(
+  exp_data = out_data,
+  N_exp = 180000,
+  exp_type = "cc",
+  exp_sd = 0.48,
+  LD_matrix = NULL, 
+  plink_loc = "plink", 
+  bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
+  max_iter = 1000
 )
-
-
-###################### Load datasets for coloc
-
-# Load summary statistics for the IV region
-prot_region <- read.csv(sum_stat_file, sep = ",")
-prot_region <- format_data(prot_region, snps = extracted_snps$SNP,
-                                        snp_col = "RSID", beta_col = "BETA",
-                                        se_col = "SE", log_pval = T, pval_col = "LOG10P",
-                                        effect_allele_col = "ALLELE1",
-                                        other_allele_col = "ALLELE0",
-                                        pos_col = "GENPOS", chr_col = "CHROM", 
-                                        eaf_col = "A1FREQ", min_pval = NA)
-
-
-# test <- finemap_susie(exp_data = prot_region,
-#                       N_exp = 34000,
-#                       exp_type = "quant",
-#                       LD_matrix = LD_matrix,
-#                       max_iter = 1000)
-
-# harm_data <- prot_region
-# 
-# harm_data <- harm_data %>%
-#   mutate(
-#     effect_allele = effect_allele.exposure,
-#     other_allele = other_allele.exposure
-#   )
-# 
-# harm_data <- harm_data %>%
-#   select(-c(
-#     effect_allele.exposure,
-#     other_allele.exposure
-#   ))
-# 
-# #LD_matrix <- get_ld_matrix_1000g(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc_1000g, with_alleles = T)$LD_Anal
-# LD_matrix <- get_ld_matrix_from_bim(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc_1000g, with_alleles = T)
-# 
-# 
-# LD_alignment <- data.frame(
-#   SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
-#   LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
-#   LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
-# )
-# 
-# temp <- merge(harm_data, LD_alignment)
-# temp <- temp %>% mutate(flipped = effect_allele != LD_A1)
-# temp <- temp %>%
-#   mutate(
-#     effect_allele = if_else(flipped, other_allele, effect_allele),
-#     other_allele = if_else(flipped, effect_allele, other_allele),
-#     beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
-#     eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure)
-#   )
-# 
-# harm_data <- temp %>%
-#   mutate(pos = pos.exposure) %>%
-#   select(
-#     SNP, pos,
-#     beta.exposure,
-#     se.exposure,
-#     eaf.exposure
-#   )
-# 
-# 
-# exp_for_coloc <- harm_data %>%
-#   select(
-#     beta.exposure,
-#     se.exposure,
-#     SNP,
-#     eaf.exposure
-#   )
-# exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
-# colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
-# exp_for_coloc <- as.list(exp_for_coloc)
-# exp_for_coloc$type <- "quant"
-# exp_for_coloc$sdY <- 1
-# exp_for_coloc$N <- 36000
-# 
-# colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
-# rownames(LD_matrix) <- colnames(LD_matrix)
-# exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
-# 
-# check_alignment(exp_for_coloc)
-# 
-# 
-# s1 <- coloc::runsusie(exp_for_coloc,
-#                             repeat_until_convergence = F,
-#                             maxit = 1000)
-# 
-# cs1=s1$sets
-# idx1=cs1$cs_index
-# bf1=s1$lbf_variable[idx1,,drop=FALSE]
-
-
-
