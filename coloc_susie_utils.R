@@ -441,12 +441,11 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
 ##' Function extracting the desired windows to colocalise
 ##' @param exp_data: either region to colocalise formatted with TwoSampleMr,
 ##'                  or str - path to exposure data in csv
-##'
 ##' @param out_data: either outcome data formatted with TwoSampleMr
 ##'                  suppose that the extracted snps correspond to exposure snps
 ##'                  or path to outcome data in csv
-##'
 ##' @param window_size: window_size around SNP of interest, default = 1000kb
+##' **TBC**
 extract_regions_for_coloc <- function(exp_data, out_data, window_size = 1000) {
   # For now assume exp/out data stored in csv, TO BE CHANGED
 
@@ -773,10 +772,14 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   ABF <- coloc.abf(exp_for_coloc, out_for_coloc)
 
   zz <- NULL
-  if (zz_plot) {
-    if (is.null(coloc_snp)) {
+  if (is.null(coloc_snp)) {
+    if (ABF[["summary"]][["PP.H4.abf"]] > .5)
       coloc_snp <- ABF$results$snp[which.max(ABF$results$SNP.PP.H4)]
-    }
+  }else{
+    warning("No coloc_snp specified for the zz plot, could not be inferred from coloc results. No plot returned.")
+    zz_plot <- FALSE
+  }
+  if (zz_plot) {
     zz <- zz_plot(
       as.data.frame(LD_matrix),
       lead_snp,
