@@ -426,10 +426,14 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
   }
 
   # Clean up temporary files
-  file.remove(list.files(tempdir(), pattern = ".ld", recursive = TRUE, full.names = TRUE))
-  file.remove(list.files(tempdir(), pattern = ".bim", recursive = TRUE, full.names = TRUE))
-  file.remove(list.files(tempdir(), pattern = ".log", recursive = TRUE, full.names = TRUE))
-  file.remove(list.files(tempdir(), pattern = ".nosex", recursive = TRUE, full.names = TRUE))
+  tryCatch(expr = {
+    file.remove(list.files(tempdir(), pattern = ".ld", recursive = TRUE, full.names = TRUE))
+    file.remove(list.files(tempdir(), pattern = ".bim", recursive = TRUE, full.names = TRUE))
+    file.remove(list.files(tempdir(), pattern = ".log", recursive = TRUE, full.names = TRUE))
+    file.remove(list.files(tempdir(), pattern = ".nosex", recursive = TRUE, full.names = TRUE))
+    }, error = function(e) {
+    warning("Temporary files used for LD computation could not be removed.")
+  })
 
   return(res)
 }
@@ -664,7 +668,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   if (is.null(LD_matrix)) {
     if (is.null(bfile_loc) | is.null(plink_loc)) {
       warning("Either bfile_loc or plink_loc is missing. Getting LD matrix from 1000G in TwoSampleMR.")
-      LD_matrix <-tryCatch(expr = {get_ld_matrix_1000g(harm_data$SNP, with_alleles = T)$LD_Anal}, error = function(e) {
+      LD_matrix <- tryCatch(expr = {get_ld_matrix_1000g(harm_data$SNP, with_alleles = T)$LD_Anal}, error = function(e) {
         stop("Window too large, SNP list must be smaller than 500. Try reducing window or provide a local ld reference.")
         NULL
       })
