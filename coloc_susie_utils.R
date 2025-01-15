@@ -859,41 +859,57 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 }
 
 
-format_main_coloc_results <- function(res.coloc){
-  
-  cols <- c("coloc_method", "nsnps", "hit1", "hit2", "PP.H0.abf", "PP.H1.abf", "PP.H2.abf",
-            "PP.H3.abf", "PP.H4.abf")
-  df <- data.frame(matrix(ncol=9,nrow=0, 
-                          dimnames=list(NULL, cols)))
-  
-  ## Susie results first
-  
-  res.susie <- res.coloc$coloc.res$susie.res
+#' @title Format Main Colocalization Results
+#' @description This function formats the main results from colocalization analysis, combining results from SuSiE and vanilla ABF methods.
+#' @param res.coloc The output of the main_coloc function
+#' @return A data frame summarizing colocalization results with columns for method, SNP counts, hits, and posterior probabilities.
+#' @examples
+#' # Example usage:
+#' # res.coloc <- list(coloc.res = list(susie.res = ..., abf.res = ...))
+#' # formatted_results <- format_main_coloc_results(res.coloc)
+#' @export
 
-  if(is.null(res.susie$summary)) {
-    temp <- data.frame("susie", NA, NA, NA, NA, NA, NA, NA, NA, stringsAsFactors = F)
+format_main_coloc_results <- function(res.coloc) {
+  # Define the column names for the output data frame
+  cols <- c("coloc_method", "nsnps", "hit1", "hit2", "PP.H0.abf", "PP.H1.abf", 
+            "PP.H2.abf", "PP.H3.abf", "PP.H4.abf")
+  
+  # Initialize an empty data frame with specified column names
+  df <- data.frame(matrix(ncol = 9, nrow = 0, 
+                          dimnames = list(NULL, cols)))
+  
+  # Process SuSiE (Sum of Single Effects) coloc results
+  res.susie <- res.coloc$coloc.res$susie.res
+  if (is.null(res.susie$summary)) {
+    # If no summary, add a row with NA values and method set to "susie"
+    temp <- data.frame("susie", NA, NA, NA, NA, NA, NA, NA, NA, stringsAsFactors = FALSE)
     colnames(temp) <- cols
-    
-    df <- rbind(df,temp)
-  }else{
-    
+    df <- rbind(df, temp)  # Append to the main data frame
+  } else {
+    # If summary exists, select relevant columns and add method "susie"
     temp <- res.susie$summary %>% select(nsnps, hit1, hit2, 
                                          PP.H0.abf, PP.H1.abf, PP.H2.abf, PP.H3.abf, PP.H4.abf)
     temp$coloc_method <- "susie"
-    df <- rbind(df,temp)
+    df <- rbind(df, temp)  # Append to the main data frame
   }
-
-  ## Vanilla ABF second
   
+  # Process vanilla ABF (Approximate Bayes Factor) coloc results
   res.abf <- res.coloc$coloc.res$abf.res
+  
+  # Identify the lead SNP with the highest posterior probability for hypothesis H4
   lead_snp <- res.abf$results$snp[which.max(res.abf$results$SNP.PP.H4)]
-  temp <- data.frame(t(res.abf$summary))  %>%
+  
+  # Transform the ABF summary to a data frame and add hit1, hit2, and method "vanilla"
+  temp <- data.frame(t(res.abf$summary)) %>%
     mutate(hit1 = lead_snp, hit2 = lead_snp, coloc_method = "vanilla")
   
+  # Append the ABF results to the main data frame
   df <- rbind(df, temp)
   
+  # Return the formatted data frame
   return(df)
 }
+
 
 
 #' Perform fine mapping with SuSiE on one dataset
