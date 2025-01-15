@@ -11,13 +11,10 @@ library(TwoSampleMR)
 setwd("~/Code/Coloc_pipeline")
 source("~/Code/Coloc_pipeline/coloc_susie_utils.R")
 
-########## Digging deeper into the runsusie outputs
-
+#### Protein first
 
 sum_stat_path <- "N:/EPIC_genetics/Annotated_windows/Annotated_windows/"
 file_list <- list.files(sum_stat_path, full.names = T, recursive = T)
-
-#### Protein first
 
 prot <- "MSMB"
 restricted_file_list <- file_list[grepl(prot, file_list)]
@@ -60,22 +57,10 @@ exp_susie <- finemap_susie(
   max_iter = 1000
 )
 
-###### Cancer second
-
 rm(list = setdiff(ls(), "exp_susie"))
-# to make sure the two parts are independent
-
-library(data.table)
-library(tidyverse)
-library(dplyr)
-library(tidyr)
-library(coloc)
-library(susieR)
-library(TwoSampleMR)
-
-setwd("~/Code/Coloc_pipeline")
 source("~/Code/Coloc_pipeline/coloc_susie_utils.R")
 
+###### Cancer second
 
 out_raw <- fread("N:/EPIC_genetics/Cancer_sumstats/ELLIPSE_V2_META_EUROPEAN_Prostate_012121.txt")
 out_raw <- out_raw %>% filter(!is.na(SNP_Id))
@@ -100,12 +85,6 @@ out_data <- TwoSampleMR::format_data(data.frame(out_raw),
                                      effect_allele_col = "Allele_1",
                                      other_allele_col = "Allele_2")
 
-
-# Remove snps for which eaf is missing
-
-out_data <- out_data %>% filter(!is.na(eaf.exposure))
-
-
 out_susie <- finemap_susie(
   exp_data = out_data,
   N_exp = 180000,
@@ -116,3 +95,64 @@ out_susie <- finemap_susie(
   bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
   max_iter = 1000
 )
+
+rm(list = setdiff(ls(), c("exp_susie", "out_susie")))
+
+
+
+############ Compare with the data available from the eQTL catalogue
+# https://github.com/eQTL-Catalogue/eQTL-Catalogue-resources/blob/master/tutorials/API_v2/eQTL_API_tutorial.md
+# https://github.com/eQTL-Catalogue/eQTL-Catalogue-resources/blob/master/tutorials/coloc.susie/coloc_susie.md
+
+library(httr)
+library(glue)
+library(jsonlite)
+library(ggrepel)
+library(readr)
+
+# # See what data is available
+# 
+# max_pulled_rows = 1000 #All datasets will be pulled if this parameter is bigger than the actual number of datasets
+# URL = glue("https://www.ebi.ac.uk/eqtl/api/v2/datasets/?size={max_pulled_rows}")
+# # Make a request
+# r <- GET(URL, accept_json())
+# # Check status
+# status_code(r)
+# # Extract content
+# cont <- content(r, "text", encoding = "UTF-8")
+# # Convert content to dataframe
+# datasets <- fromJSON(cont)
+
+# lbf variables extracted via cmd
+#gunzip -c QTD000021.lbf_variable.txt.gz | head -n1 > QTD000021_ENSG00000101425.tsv && gunzip -c QTD000021.lbf_variable.txt.gz | grep ENSG00000101425 >> QTD000021_ENSG00000101425.tsv
+#gunzip -c QTD000026.lbf_variable.txt.gz | head -n1 > QTD000026_ENSG00000101425.tsv && gunzip -c QTD000026.lbf_variable.txt.gz | grep ENSG00000101425 >> QTD000026_ENSG00000101425.tsv
+#gunzip -c QTD000584.lbf_variable.txt.gz | head -n1 > QTD000584_BPI.tsv && gunzip -c QTD000584.lbf_variable.txt.gz | grep "BPI.4126.22.1..1" >> QTD000584_BPI.tsv
+
+#BLUEPRINT monocytes
+mono_lbf = readr::read_tsv("eQTL_catalogue/QTD000026_ENSG00000101425.tsv.gz", show_col_types = FALSE)
+#BLUEPRINT neutrophils
+neutrophil_lbf = readr::read_tsv("eQTL_catalogue/QTD000021_ENSG00000101425.tsv.gz", show_col_types = FALSE)
+#INTERVAL plasma pQTLs
+interval_lbf = readr::read_tsv("eQTL_catalogue/QTD000584_BPI.tsv.gz", show_col_types = FALSE)
+
+## Convert to matrix suitable to coloc_bf_bf
+
+#BLUEPRINT monocytes
+mono_mat = as.matrix(dplyr::select(mono_lbf, lbf_variable1:lbf_variable10))
+row.names(mono_mat) = mono_lbf$variant
+mono_mat = t(mono_mat)
+#BLUEPRINT neutrophils
+neutro_mat = as.matrix(dplyr::select(neutrophil_lbf, lbf_variable1:lbf_variable10))
+row.names(neutro_mat) = neutrophil_lbf$variant
+neutro_mat = t(neutro_mat)
+#INTERVAL plasma pQTLs
+interval_mat = as.matrix(dplyr::select(interval_lbf, lbf_variable1:lbf_variable10))
+row.names(interval_mat) = interval_lbf$variant
+interval_mat = t(interval_mat)
+
+
+
+test = readr::read_tsv("eQTL_catalogue/QTD000508.credible_sets.tsv.gz", show_col_types = FALSE)
+
+
+
