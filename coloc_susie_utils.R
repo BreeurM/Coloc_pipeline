@@ -179,7 +179,7 @@ format_dat <- function(dat, type = "exposure", snps = NA,
 #' Temporary files created during the analysis are automatically cleaned up. If the specified SNP
 #' is not found in the data, the function returns an empty data frame with the same structure as `snp_dat`.
 #'
-#' #' @author Karl Smith-Byrne
+#' #' @author K. Smith-Byrne
 #'
 find_proxy_snps <- function(plink_path = "plink",
                             bfile_prefix = "N:/EPIC_genetics/1000G_EUR/1000G_EUR/QC_1000G_P3",
@@ -629,6 +629,8 @@ zz_plot <- function(LD_Mat, lead_SNP = NULL, Harm_dat, coloc_SNP,
 #'
 #' @return A SuSiE colocalization result object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets.
 #'         If SuSiE fails to converge for either dataset, the function returns `NULL`.
+#'         
+#' @author M.Breeur
 main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                        out_data, N_out, out_type, out_sd = 1,
                        LD_matrix = NULL, plink_loc = "plink", bfile_loc = NULL,
@@ -693,7 +695,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     temp <- merge(harm_data, LD_alignment)
     temp <- temp %>%
       mutate(
-        flipped = effect_allele != LD_A1,
+        flipped = effect_allele.exposure != LD_A1,
         effect_allele = if_else(flipped, other_allele.exposure, effect_allele.exposure),
         other_allele = if_else(flipped, effect_allele.exposure, other_allele.exposure),
         beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
@@ -857,7 +859,41 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 }
 
 
+format_main_coloc_results <- function(res.coloc){
+  
+  cols <- c("coloc_method", "nsnps", "hit1", "hit2", "PP.H0.abf", "PP.H1.abf", "PP.H2.abf",
+            "PP.H3.abf", "PP.H4.abf")
+  df <- data.frame(matrix(ncol=9,nrow=0, 
+                          dimnames=list(NULL, cols)))
+  
+  ## Susie results first
+  
+  res.susie <- res.coloc$coloc.res$susie.res
 
+  if(is.null(res.susie$summary)) {
+    temp <- data.frame("susie", NA, NA, NA, NA, NA, NA, NA, NA, stringsAsFactors = F)
+    colnames(temp) <- cols
+    
+    df <- rbind(df,temp)
+  }else{
+    
+    temp <- res.susie$summary %>% select(nsnps, hit1, hit2, 
+                                         PP.H0.abf, PP.H1.abf, PP.H2.abf, PP.H3.abf, PP.H4.abf)
+    temp$coloc_method <- "susie"
+    df <- rbind(df,temp)
+  }
+
+  ## Vanilla ABF second
+  
+  res.abf <- res.coloc$coloc.res$abf.res
+  lead_snp <- res.abf$results$snp[which.max(res.abf$results$SNP.PP.H4)]
+  temp <- data.frame(t(res.abf$summary))  %>%
+    mutate(hit1 = lead_snp, hit2 = lead_snp, coloc_method = "vanilla")
+  
+  df <- rbind(df, temp)
+  
+  return(df)
+}
 
 
 #' Perform fine mapping with SuSiE on one dataset
@@ -881,7 +917,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 #' @return A SuSiE object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets.
 #'         If SuSiE fails to converge, the function returns `NULL`.
 #'
-#'  @author Adapted from Chris Wallace - runsusie: https://github.com/chr1swallace/coloc/blob/main/R/susie.R#L379
+#' @author M. Breeur
+#' @author Adapted from C. Wallace: https://github.com/chr1swallace/coloc/blob/main/R/susie.R
 finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                           LD_matrix = NULL, plink_loc = "plink", bfile_loc = NULL,
                           ...) {
@@ -1039,8 +1076,148 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     } # Increase iterations if not converged
   }
 
-  # Annotate SuSiE results and return
+  # Annotate SuSiE results
   susie.res <- annotate_susie(res, snp, LD)
+  
+  # Format the data
+  
+  LBF <- as.matrix(susie.res$lbf_variable)
 
-  return(susie.res)
+  return(list(susie.res = susie.res))
+}
+
+
+#' Extract Credible Sets and Posterior Statistics from a SuSiE Object
+#'
+#' This function processes a SuSiE (Sum of Single Effects) object to extract credible sets, 
+#' their purity, and posterior statistics such as posterior means, standard deviations, 
+#' and log Bayes factors. It also identifies overlapping credible sets and computes 
+#' metrics related to their quality.
+#'
+#' @param susie_object A SuSiE object, typically the result of running `susieR::susie()`, 
+#'                     containing information about credible sets, posterior inclusion 
+#'                     probabilities (PIPs), and other statistical metrics.
+#'
+#' @return A list with three data frames:
+#'   \item{cs_df}{A data frame containing credible set information, including size, 
+#'                log10 Bayes factors, and purity metrics.}
+#'   \item{variant_df}{A data frame with variant-level statistics, including posterior 
+#'                     means, standard deviations, and inclusion in credible sets.}
+#'   \item{lbf_df}{A data frame with log Bayes factors for each variable across credible sets.}
+#'
+#' @details 
+#' The function identifies credible sets, evaluates their purity based on correlation metrics, 
+#' and flags low-purity sets. Posterior statistics, including means, standard deviations, 
+#' and Bayes factors, are extracted for each variant. Overlapping credible sets are also 
+#' tracked and excluded from certain outputs.
+#'
+#' @importFrom dplyr as_tibble mutate filter select bind_cols left_join
+#' @importFrom purrr map_df
+#' @importFrom susieR susie_get_posterior_mean susie_get_posterior_sd
+#'
+#' @author Kaur Alasoo: https://github.com/eQTL-Catalogue/qtlmap/blob/master/bin/run_susie.R
+#' @export
+extractResults <- function(susie_object) {
+  # Extract credible sets from the susie_object
+  credible_sets = susie_object$sets$cs
+  cs_list = list()
+  
+  # Initialize purity data and add additional columns for analysis
+  susie_object$sets$purity = dplyr::as_tibble(susie_object$sets$purity) %>%
+    dplyr::mutate(
+      cs_id = rownames(susie_object$sets$purity),  # Add credible set ID
+      cs_size = NA,                                # Initialize size of credible set
+      cs_log10bf = NA,                             # Initialize log10 Bayes factor
+      overlapped = NA                              # Initialize overlap flag
+    )
+  
+  # Track variants already included in credible sets
+  added_variants = c()
+  
+  # Iterate over each credible set
+  for (index in seq_along(credible_sets)) {
+    cs_variants = credible_sets[[index]]          # Variants in the current credible set
+    cs_id = susie_object$sets$cs_index[[index]]   # Index of the credible set
+    
+    # Check if any variants overlap with previously added sets
+    is_overlapped = any(cs_variants %in% added_variants)
+    susie_object$sets$purity$overlapped[index] = is_overlapped
+    susie_object$sets$purity$cs_size[index] = length(cs_variants)  # Size of credible set
+    susie_object$sets$purity$cs_log10bf[index] = log10(exp(susie_object$lbf[cs_id]))  # Log10 Bayes factor
+    
+    # If the set is not overlapping, add it to the results
+    if (!is_overlapped) {
+      cs_list[[index]] = dplyr::tibble(
+        cs_id = paste0("L", cs_id),              # Format the credible set ID
+        variant_id = susie_object$variant_id[cs_variants]  # Variants in the credible set
+      )
+      added_variants = append(added_variants, cs_variants)  # Update added variants
+    }
+  }
+  
+  # Combine all credible set data into a single data frame
+  df = purrr::map_df(cs_list, identity)
+  
+  # Extract purity values for all sets
+  purity_res = susie_object$sets$purity
+  
+  # Check for empty purity results; if not empty, process further
+  if (nrow(purity_res) > 0) {
+    purity_df = dplyr::as_tibble(purity_res) %>%
+      dplyr::filter(!overlapped) %>%  # Filter out overlapping sets
+      dplyr::mutate(
+        cs_avg_r2 = mean.abs.corr^2,   # Average R^2
+        cs_min_r2 = min.abs.corr^2,    # Minimum R^2
+        low_purity = min.abs.corr < 0.5  # Flag for low purity
+      ) %>%
+      dplyr::select(cs_id, cs_log10bf, cs_avg_r2, cs_min_r2, cs_size, low_purity)  # Select relevant columns
+  } else {
+    purity_df = dplyr::tibble()  # Empty purity data frame
+  }
+  
+  # Extract posterior means, standard deviations, and other related values
+  mean_vec = susieR::susie_get_posterior_mean(susie_object)
+  sd_vec = susieR::susie_get_posterior_sd(susie_object)
+  
+  # Extract alpha, mean, and standard deviation matrices
+  alpha_mat = t(susie_object$alpha)
+  colnames(alpha_mat) = paste0("alpha", seq(ncol(alpha_mat)))
+  
+  mean_mat = t(susie_object$alpha * susie_object$mu) / susie_object$X_column_scale_factors
+  colnames(mean_mat) = paste0("mean", seq(ncol(mean_mat)))
+  
+  sd_mat = sqrt(t(susie_object$alpha * susie_object$mu2 - (susie_object$alpha * susie_object$mu)^2)) /
+    susie_object$X_column_scale_factors
+  colnames(sd_mat) = paste0("sd", seq(ncol(sd_mat)))
+  
+  # Extract log Bayes factors for variables
+  lbf_variable_mat = t(susie_object$lbf_variable)
+  colnames(lbf_variable_mat) = paste0("lbf_variable", seq(ncol(lbf_variable_mat)))
+  
+  # Create a data frame for posterior statistics
+  posterior_df = dplyr::tibble(
+    variant_id = rownames(alpha_mat),
+    pip = susie_object$pip,        # Posterior inclusion probabilities
+    z = susie_object$z,            # Z-scores
+    posterior_mean = mean_vec,     # Posterior mean
+    posterior_sd = sd_vec          # Posterior standard deviation
+  ) %>% dplyr::bind_cols(purrr::map(list(alpha_mat, mean_mat, sd_mat), dplyr::as_tibble))
+  
+  # Create a data frame for log Bayes factors
+  lbf_df = dplyr::tibble(variant_id = rownames(lbf_variable_mat)) %>%
+    dplyr::bind_cols(dplyr::as_tibble(lbf_variable_mat))
+  
+  # Combine results into final data frames if data is non-empty
+  if (nrow(df) > 0 & nrow(purity_df) > 0 & ncol(lbf_df) > 10) {  # Check data validity
+    cs_df = purity_df  # Credible set data frame
+    variant_df = dplyr::left_join(posterior_df, df, by = "variant_id") %>%
+      dplyr::left_join(cs_df, by = "cs_id")  # Combine variant data
+  } else {
+    cs_df = NULL
+    variant_df = NULL
+    lbf_df = NULL
+  }
+  
+  # Return a list of results
+  return(list(cs_df = cs_df, variant_df = variant_df, lbf_df = lbf_df))
 }
