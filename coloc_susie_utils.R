@@ -652,17 +652,6 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     any(harm_data$other_allele.exposure != harm_data$other_allele.outcome)) {
     stop("Inconsistent effect alleles for exposure and outcome after harmonisation.")
   }
-  harm_data <- harm_data %>%
-    mutate(
-      effect_allele = effect_allele.exposure,
-      other_allele = other_allele.exposure
-    ) %>%
-    select(-c(
-      effect_allele.exposure,
-      other_allele.exposure,
-      effect_allele.outcome,
-      other_allele.outcome
-    ))
 
   # Import LD_matrix if provided as file paths, or import from 1000G if NULL
   if (is.null(LD_matrix)) {
@@ -705,8 +694,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     temp <- temp %>%
       mutate(
         flipped = effect_allele != LD_A1,
-        effect_allele = if_else(flipped, other_allele, effect_allele),
-        other_allele = if_else(flipped, effect_allele, other_allele),
+        effect_allele = if_else(flipped, other_allele.exposure, effect_allele.exposure),
+        other_allele = if_else(flipped, effect_allele.exposure, other_allele.exposure),
         beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
         beta.outcome = if_else(flipped, -beta.outcome, beta.outcome),
         eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
@@ -894,7 +883,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 #'
 #'  @author Adapted from Chris Wallace - runsusie: https://github.com/chr1swallace/coloc/blob/main/R/susie.R#L379
 finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
-                          LD_matrix = NULL, ...) {
+                          LD_matrix = NULL, plink_loc = "plink", bfile_loc = NULL,
+                          ...) {
   # Check input consistency
   # exp_type
 
@@ -903,32 +893,27 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     exp_data <- read.csv(exp_data)
   }
 
-  # Harmonize the exposure data to ensure consistent SNP and allele representation
-  # Align column names and remove redundant columns
-  harm_data <- exp_data %>%
-    mutate(
-      effect_allele = effect_allele.exposure,
-      other_allele = other_allele.exposure
-    ) %>%
-    select(-c(
-      effect_allele.exposure,
-      other_allele.exposure
-    ))
-
-  # Load or compute the LD matrix
+  harm_data <- exp_data
+  # Import LD_matrix if provided as file paths, or import from 1000G if NULL
   if (is.null(LD_matrix)) {
-    # Compute LD matrix using external function if not provided
-    LD_matrix <- get_ld_matrix(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = TRUE)$LD_Anal
+    if (is.null(bfile_loc) | is.null(plink_loc)) {
+      warning("Either bfile_loc or plink_loc is missing. Getting LD matrix from 1000G in TwoSampleMR.")
+      LD_matrix <- tryCatch(expr = {get_ld_matrix_1000g(harm_data$SNP, with_alleles = T)$LD_Anal}, error = function(e) {
+        stop("Window too large, SNP list must be smaller than 500. Try reducing window or provide a local ld reference.")
+        NULL
+      })
+    } else {
+      LD_matrix <- get_ld_matrix_from_bim(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)
+    }
   } else {
-    # Read LD matrix from a file if provided as a file path
     if (is.character(LD_matrix)) {
       LD_matrix <- read.csv(LD_matrix)
     }
   }
 
   # Check if allele information is present in the LD matrix and align if necessary
-  if (!(all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 2] %in% c("A", "C", "T", "G")) &
-    all(str_split_fixed(colnames(LD_matrix), "_", 3)[, 3] %in% c("A", "C", "T", "G")))) {
+  if (!(all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 2])) &
+        all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 3])))) {
     # Handle case where allele information is missing or incorrect
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Z-scores vs. observed Z-scores")
     harm_data <- harm_data %>%
@@ -949,16 +934,18 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     temp <- merge(harm_data, LD_alignment)
     temp <- temp %>%
       mutate(
-        flipped = effect_allele != LD_A1,
-        effect_allele = if_else(flipped, other_allele, effect_allele),
-        other_allele = if_else(flipped, effect_allele, other_allele),
+        flipped = effect_allele.exposure != LD_A1,
+        effect_allele = if_else(flipped, other_allele.exposure, effect_allele.exposure),
+        other_allele = if_else(flipped, effect_allele.exposure, other_allele.exposure),
         beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
         eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure)
       )
 
     if (any(temp$LD_A1 != temp$effect_allele)) {
       # Stop execution if alleles cannot be aligned
-      stop("Could not flip the alleles to match LD matrix. Check that the allele info provided is correct.")
+      n_excl <- sum(temp$LD_A1 != temp$effect_allele)
+      temp <- temp %>% filter(LD_A1 == effect_allele)
+      warning(paste0("Inconsistent alleles when matching to LD matrix. Excluding ", as.character(n_excl), " variants from the analysis."))
     }
 
     harm_data <- temp %>%
@@ -971,7 +958,11 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       )
   }
 
-  # Prepare exposure data for coloc analysis
+  # Remove alleles from LD matrix column names for cross ref with ext/out data
+  colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
+  rownames(LD_matrix) <- colnames(LD_matrix)
+  
+  # Prepare data for SuSiE colocalization analysis
   exp_for_coloc <- harm_data %>%
     select(
       beta.exposure,
@@ -979,31 +970,29 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       SNP,
       eaf.exposure
     )
-
-  # Convert standard errors to variances
   exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
   colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
   exp_for_coloc <- as.list(exp_for_coloc)
   exp_for_coloc$type <- exp_type
-
-  # Add specific parameters for the exposure study type
   if (exp_type == "quant") {
     exp_for_coloc$sdY <- exp_sd
   } else {
     exp_for_coloc$s <- exp_sd
   }
   exp_for_coloc$N <- N_exp
-
-  # Adjust LD matrix SNP names to match the exposure data
-  colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
-  rownames(LD_matrix) <- colnames(LD_matrix)
   exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
 
   # Check alignment between exposure data and LD matrix
-  alignment_check <- check_alignment(exp_for_coloc)
-
-  if (alignment_check < 0.6) {
-    stop("Suspected alignment error")
+  # Flags for faulty allele alignment
+  exp_qc <- list(
+    kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
+                          exp_for_coloc$LD,
+                          n = N_exp
+    ),
+    alignment_check = check_alignment(exp_for_coloc)
+  )
+  if (exp_qc$alignment_check < 0.7) {
+    warning("Suspected alignment error.")
   }
 
   # Calculate Z-scores for SuSiE
