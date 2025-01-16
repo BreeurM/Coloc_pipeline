@@ -682,8 +682,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       select(
         SNP, pos,
         beta.exposure, beta.outcome,
-        se.exposure, se.outcome,
-        eaf.exposure, eaf.outcome
+        se.exposure, se.outcome
+        # eaf.exposure, eaf.outcome
       )
   } else {
     # Flip alleles in harmonised data to align with LD matrix
@@ -699,9 +699,9 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         effect_allele = if_else(flipped, other_allele.exposure, effect_allele.exposure),
         other_allele = if_else(flipped, effect_allele.exposure, other_allele.exposure),
         beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
-        beta.outcome = if_else(flipped, -beta.outcome, beta.outcome),
-        eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
-        eaf.outcome = if_else(flipped, 1 - eaf.outcome, eaf.outcome)
+        beta.outcome = if_else(flipped, -beta.outcome, beta.outcome)
+        # eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure),
+        # eaf.outcome = if_else(flipped, 1 - eaf.outcome, eaf.outcome)
       )
 
     if (any(temp$LD_A1 != temp$effect_allele)) {
@@ -714,8 +714,8 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       select(
         SNP, pos,
         beta.exposure, beta.outcome,
-        se.exposure, se.outcome,
-        eaf.exposure, eaf.outcome
+        se.exposure, se.outcome
+        # eaf.exposure, eaf.outcome
       )
   }
 
@@ -728,11 +728,11 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     select(
       beta.exposure,
       se.exposure,
-      SNP,
-      eaf.exposure
+      SNP
+      # eaf.exposure
     )
   exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
-  colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
+  colnames(exp_for_coloc) <- c("beta", "varbeta", "snp") #, "MAF")
   exp_for_coloc <- as.list(exp_for_coloc)
   exp_for_coloc$type <- exp_type
   if (exp_type == "quant") {
@@ -748,11 +748,11 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     select(
       beta.outcome,
       se.outcome,
-      SNP,
-      eaf.outcome
+      SNP
+      # eaf.outcome
     )
   out_for_coloc$se.outcome <- out_for_coloc$se.outcome^2
-  colnames(out_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
+  colnames(out_for_coloc) <- c("beta", "varbeta", "snp")# "MAF")
   out_for_coloc <- as.list(out_for_coloc)
   out_for_coloc$type <- out_type
   if (out_type == "quant") {
