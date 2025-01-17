@@ -151,3 +151,11 @@ res$coloc.res$abf.res$summary
 # SuSiE fails to derive a credible set because the signal is very weak. 
 
 
+################################################################################ 
+# Format results into dataframe
+################################################################################ 
+
+
+df_res <- format_main_coloc_results(res)
+#Add two colums to keep track of traits
+df_res <- df_res %>% mutate(trait_1 = "P16234", trait_2 = "Polycythaemia_vera")
