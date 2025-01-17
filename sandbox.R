@@ -110,49 +110,40 @@ library(jsonlite)
 library(ggrepel)
 library(readr)
 
-# # See what data is available
-# 
-# max_pulled_rows = 1000 #All datasets will be pulled if this parameter is bigger than the actual number of datasets
-# URL = glue("https://www.ebi.ac.uk/eqtl/api/v2/datasets/?size={max_pulled_rows}")
-# # Make a request
-# r <- GET(URL, accept_json())
-# # Check status
-# status_code(r)
-# # Extract content
-# cont <- content(r, "text", encoding = "UTF-8")
-# # Convert content to dataframe
-# datasets <- fromJSON(cont)
+# See what data is available
 
-# lbf variables extracted via cmd
-#gunzip -c QTD000021.lbf_variable.txt.gz | head -n1 > QTD000021_ENSG00000101425.tsv && gunzip -c QTD000021.lbf_variable.txt.gz | grep ENSG00000101425 >> QTD000021_ENSG00000101425.tsv
-#gunzip -c QTD000026.lbf_variable.txt.gz | head -n1 > QTD000026_ENSG00000101425.tsv && gunzip -c QTD000026.lbf_variable.txt.gz | grep ENSG00000101425 >> QTD000026_ENSG00000101425.tsv
-#gunzip -c QTD000584.lbf_variable.txt.gz | head -n1 > QTD000584_BPI.tsv && gunzip -c QTD000584.lbf_variable.txt.gz | grep "BPI.4126.22.1..1" >> QTD000584_BPI.tsv
+max_pulled_rows = 1000 #All datasets will be pulled if this parameter is bigger than the actual number of datasets
+URL = glue("https://www.ebi.ac.uk/eqtl/api/v2/datasets/?size={max_pulled_rows}")
+# Make a request
+r <- GET(URL, accept_json())
+# Check status
+status_code(r)
+# Extract content
+cont <- content(r, "text", encoding = "UTF-8")
+# Convert content to dataframe
+datasets <- fromJSON(cont)
 
-#BLUEPRINT monocytes
-mono_lbf = readr::read_tsv("eQTL_catalogue/QTD000026_ENSG00000101425.tsv.gz", show_col_types = FALSE)
-#BLUEPRINT neutrophils
-neutrophil_lbf = readr::read_tsv("eQTL_catalogue/QTD000021_ENSG00000101425.tsv.gz", show_col_types = FALSE)
-#INTERVAL plasma pQTLs
-interval_lbf = readr::read_tsv("eQTL_catalogue/QTD000584_BPI.tsv.gz", show_col_types = FALSE)
 
-## Convert to matrix suitable to coloc_bf_bf
+# Extract LBF for two random studies
 
-#BLUEPRINT monocytes
-mono_mat = as.matrix(dplyr::select(mono_lbf, lbf_variable1:lbf_variable10))
-row.names(mono_mat) = mono_lbf$variant
-mono_mat = t(mono_mat)
-#BLUEPRINT neutrophils
-neutro_mat = as.matrix(dplyr::select(neutrophil_lbf, lbf_variable1:lbf_variable10))
-row.names(neutro_mat) = neutrophil_lbf$variant
-neutro_mat = t(neutro_mat)
-#INTERVAL plasma pQTLs
-interval_mat = as.matrix(dplyr::select(interval_lbf, lbf_variable1:lbf_variable10))
-row.names(interval_mat) = interval_lbf$variant
-interval_mat = t(interval_mat)
+sun_cs  <- readr::read_tsv("eQTL_catalogue/Sun2018.credible_sets.tsv.gz", show_col_types = FALSE)
+sun_lbf <- fread("eQTL_catalogue/Sun2018.lbf_variable.txt.gz")
+
+schmiedel_cs  <- readr::read_tsv("eQTL_catalogue/Schmiedel2018.credible_sets.tsv.gz", show_col_types = FALSE)
+schmiedel_lbf <- fread("eQTL_catalogue/Schmiedel2018.lbf_variable.txt.gz")
 
 
 
-test = readr::read_tsv("eQTL_catalogue/QTD000508.credible_sets.tsv.gz", show_col_types = FALSE)
+
+
+
+
+
+
+
+
+
+
 
 
 
