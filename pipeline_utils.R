@@ -1,59 +1,10 @@
-#' SNP Proxy and Colocalisation Analysis Toolkit
-#'
-#' This script provides a suite of functions for genomic analysis, including identifying proxy SNPs,
-#' computing linkage disequilibrium (LD) matrices, extracting genomic regions for colocalisation,
-#' and performing colocalisation analysis using the coloc + SuSiE algorithm. The toolkit leverages PLINK
-#' TwoSampleMR, and coloc for processing of SNP data, LD computation, and colocalisation analysis
-#'
-#' ## Key Functions:
-#' 1. `find_proxy_snps`: Identifies proxy SNPs within a specified genomic window based on LD thresholds.
-#' 2. `get_ld_matrix`: Computes and formats an LD matrix for a set of SNPs using PLINK.
-#' 3. `extract_regions_for_coloc`: Extracts genomic regions around SNPs for colocalisation analysis.
-#' 4. `main_coloc`: Performs colocalisation analysis using SuSiE and LD fine-mapping.
-#'
-#' ## Requirements:
-#' - PLINK installed and accessible via command line.
-#' - `ieugwasr`, `TwoSampleMR`, and `coloc` R packages.
-#'
-#' ## Notes:
-#' - Input data must be formatted correctly for PLINK and TwoSampleMR.
-#' - Ensure compatibility of allele information across datasets to avoid errors during harmonization.
-#' - Temporary files generated during execution are automatically cleaned up.
-#'
-#' ## Outputs:
-#' - Proxy SNPs for a given target SNP.
-#' - LD matrices for analysis and plotting.
-#' - Colocalisation results with posterior probabilities and fine-mapping outputs.
-
-
-#' Get Available Memory on the System
-#'
-#' This helper function determines the total available memory on the system,
-#' which can be used to dynamically allocate resources for memory-intensive tasks.
-#'
-#' @return Numeric value representing the total memory in megabytes (MB)
-get_available_memory <- function() {
-  if (Sys.info()["sysname"] == "Windows") {
-    # On Windows, estimate memory (simplified, may vary by system)
-    # Define the input
-    system_output <- system("wmic OS get TotalVisibleMemorySize /Value", intern = TRUE)
-    as.numeric(sub(".*=(\\d+).*", "\\1", system_output[3])) / 1024
-  } else {
-    # On Unix-based systems, use 'free' command
-    as.numeric(system("free -m | awk '/Mem:/ {print $2}'", intern = TRUE))
-  }
-}
-
-
 #' Read and format exposure or outcome data
 #' Checks and organises columns for use with MR or enrichment tests.
 #' Infers p-values when possible from beta and se.
 #'
 #' @param dat Data frame. Must have header with at least SNP column present.
-#' @param type Is this the exposure or the outcome data that is being read in? The default is `"exposure"`.
+#' @param suffixe Is this the exposure or the outcome data that is being read in? The default is `"exposure"`.
 #' @param snps SNPs to extract. If NULL then doesn't extract any and keeps all. The default is `NULL`.
-#' @param header The default is `TRUE`.
-#' @param phenotype_col Optional column name for the column with phenotype name corresponding the the SNP. If not present then will be created with the value `"Outcome"`. The default is `"Phenotype"`.
 #' @param snp_col Required name of column with SNP rs IDs. The default is `"SNP"`.
 #' @param beta_col Required for MR. Name of column with effect sizes. The default is `"beta"`.
 #' @param se_col Required for MR. Name of column with standard errors. The default is `"se"`.
@@ -75,7 +26,7 @@ get_available_memory <- function() {
 #' @param log_pval The pval is -log10(P). The default is `FALSE`.
 #'
 #' @author Optimised from TwoSampleMR https://github.com/MRCIEU/TwoSampleMR/blob/master/R/read_data.R
-format_dat <- function(dat, type = "exposure", snps = NA,
+format_dat <- function(dat, suffixe = "", snps = NA,
                        phenotype_col = NA, snp_col = NA,
                        beta_col = NA, se_col = NA, eaf_col = NA,
                        effect_allele_col = NA, other_allele_col = NA,
@@ -88,7 +39,7 @@ format_dat <- function(dat, type = "exposure", snps = NA,
   if (!snp_col %in% names(dat)) {
     stop("SNP column not found")
   }
-
+  
   # Select and standardize relevant columns
   all_cols <- c(
     phenotype_col, snp_col, beta_col, se_col, eaf_col,
@@ -96,59 +47,341 @@ format_dat <- function(dat, type = "exposure", snps = NA,
     ncase_col, ncontrol_col, samplesize_col, gene_col, id_col,
     z_col, info_col, chr_col, pos_col
   )
-
+  
   all_cols <- allcols[!is.na(all_cols)]
-
+  
   dat <- dat %>%
     dplyr::select(any_of(all_cols)) %>%
     rename_with(~"SNP", all_of(snp_col)) %>%
     mutate(SNP = tolower(SNP) %>% str_replace_all("[[:space:]]", "")) %>%
     filter(!is.na(SNP))
-
+  
   # Filter SNPs if provided
   if (!is.null(snps)) {
     dat <- dat %>% filter(SNP %in% snps)
   }
-
+  
   # Add or rename phenotype column
   dat <- dat %>% mutate(!!type := if_else(phenotype_col %in% names(dat), phenotype_col, type))
   if (phenotype_col %in% names(dat) && phenotype_col != type) {
     dat <- dat %>% dplyr::select(-all_of(phenotype_col))
   }
-
+  
   # Convert log p-values if needed
   if (log_pval && pval_col %in% names(dat)) {
     dat <- dat %>% mutate(!!pval_col := 10^-(.data[[pval_col]]))
   }
-
+  
   # Remove duplicated SNPs
   dat <- dat %>% distinct(SNP, .keep_all = TRUE)
-
+  
   # Check and clean columns for MR
   required_cols <- c(beta_col, se_col, effect_allele_col)
   optional_cols <- c(other_allele_col, eaf_col)
-
+  
   if (!all(required_cols %in% names(dat))) {
     warning("Missing required columns for MR analysis: ", paste(setdiff(required_cols, names(dat)), collapse = ", "))
     dat <- dat %>% mutate(mr_keep = FALSE)
   } else {
     dat <- dat %>% mutate(mr_keep = rowSums(across(all_of(required_cols), ~ !is.na(.))) == length(required_cols))
   }
-
+  
   # Infer p-values if missing
   if (!pval_col %in% names(dat) && all(c(beta_col, se_col) %in% names(dat))) {
     dat <- dat %>% mutate(!!pval_col := 2 * pnorm(abs(.data[[beta_col]]) / .data[[se_col]], lower.tail = FALSE))
   }
-
+  
   # Generate sample size if missing
   if (!samplesize_col %in% names(dat) && all(c(ncase_col, ncontrol_col) %in% names(dat))) {
     dat <- dat %>% mutate(!!samplesize_col := .data[[ncase_col]] + .data[[ncontrol_col]])
   }
-
+  
   # Finalize column names for output
   dat <- dat %>% rename_with(~ paste0(.x, ".", type), setdiff(names(dat), c("SNP", type)))
-
+  
   return(dat)
+}
+
+#' Infers the genome build of the summary statistics file (GRCh37 or GRCh38)
+#' from the data. Uses SNP (RSID) & CHR & BP to get genome build.
+#'
+#' @param sumstats data table/data frame obj of the summary statistics file for
+#' the GWAS ,or file path to summary statistics file.
+#' @param nThread Number of threads to use for parallel processes.
+#' @param sampled_snps Downsample the number of SNPs used when inferring genome
+#' build to save time.
+#' @param standardise_headers Run
+#' @param standardise_headers Run
+#' \code{standardise_sumstats_column_headers_crossplatform}.
+#' @param mapping_file \pkg{MungeSumstats} has a pre-defined
+#' column-name mapping file
+#' which should cover the most common column headers and their interpretations.
+#' However, if a column header that is in your file is missing of the mapping we
+#' give is incorrect you can supply your own mapping file. Must be a 2 column
+#' dataframe with column names "Uncorrected" and "Corrected". See
+#' \code{data(sumstatsColHeaders)} for default mapping and necessary format.
+#' @param dbSNP version of dbSNP to be used (144 or 155). Default is 155.
+#' @param header_only Instead of reading in the entire \code{sumstats} file,
+#' only read in the first N rows where N=\code{sampled_snps}.
+#' This should help speed up cases where you have to read in \code{sumstats}
+#' from disk each time.
+#' @param allele_match_ref Instead of returning the genome_build this will
+#' return the propotion of matches to each genome build for each allele (A1,A2).
+#' @inheritParams format_sumstats
+#' @inheritParams get_genome_builds
+#'
+#' @return ref_genome the genome build of the data
+#' @importFrom data.table setDT :=
+#' @keywords internal
+get_genome_build <- function(dataset, dbSNP = 155) {
+  ### Add this to avoid confusing BiocCheck
+  seqnames <- CHR <- SNP <- BP <- alt_alleles <- NULL
+  sumstats <- data.table::setDT(sumstats)
+  # need SNP ID column (RS ID) CHR and BP (POS) to infer build
+  # - check these are present, considering all known names
+  if (standardise_headers) {
+    sumstats_return <-
+      standardise_sumstats_column_headers_crossplatform(
+        sumstats_dt = sumstats,
+        mapping_file = mapping_file
+      )
+    sumstats <- sumstats_return$sumstats_dt
+  }
+  
+  err_msg <-
+    paste0(
+      "SNP ID column (RS ID), CHR and BP (POSITION) columns are needed ",
+      "to infer the genome build. These could not be\nfound in your ",
+      "dataset. Please specify the genome build manually to run ",
+      "format_sumstats()."
+    )
+  # Infer genome build using SNP & CHR & BP
+  if (!all(c("SNP", "CHR", "BP") %in% colnames(sumstats))) {
+    # want it returned rather than throwing an error
+    if (isTRUE(allele_match_ref)) {
+      return(err_msg)
+    } else {
+      stop(err_msg)
+    }
+  }
+  
+  #### Do some filtering first to avoid errors ####
+  nrow_org <- nrow(sumstats)
+  sumstats <- sumstats[complete.cases(SNP, BP, CHR)]
+  err_msg2 <-
+    paste0(
+      "SNP ID column (RS ID), CHR and BP (POSITION)",
+      "columns are needed to",
+      " infer the genome build.",
+      "These contain too many\nmissing values in",
+      " your dataset to be used.",
+      "Please specify the genome build manually",
+      " to run format_sumstats()"
+    )
+  # also remove common incorrect formatting of SNP
+  sumstats <- sumstats[grepl("^rs", SNP), ]
+  sumstats <- sumstats[SNP != ".", ]
+  # also deal with common misformatting of CHR
+  # if chromosome col has chr prefix remove it
+  sumstats[, CHR := gsub("chr", "", CHR)]
+  
+  # for internal testing - filter to specified chromosomes
+  if (!is.null(chr_filt)) {
+    sumstats <- sumstats[CHR %in% chr_filt]
+  }
+  
+  # if removing erroneous cases leads to <min(10k,50% org dataset) will fail -
+  # NOT ENOUGH DATA TO INFER
+  nrow_clean <- nrow(sumstats)
+  size_okay <- FALSE
+  if (nrow_clean > sampled_snps || (nrow_clean != 0 &&
+                                    (nrow_clean / nrow_org) > .5)) {
+    size_okay <- TRUE
+  }
+  if (!size_okay) {
+    # want it returned rather than throwing an error
+    if (isTRUE(allele_match_ref)) {
+      return(err_msg2)
+    } else {
+      stop(err_msg2)
+    }
+  }
+  #### Downsample SNPs to save time ####
+  if ((nrow(sumstats) > sampled_snps) && !(is.null(sampled_snps))) {
+    snps <- sample(sumstats$SNP, sampled_snps)
+  } else { # nrow(sumstats)<10k
+    snps <- sumstats$SNP
+  }
+  
+  sumstats <- sumstats[SNP %in% snps, ]
+  
+  # now split into functions two roles
+  if (isTRUE(allele_match_ref)) {
+    # 1. checking for matches for A1/A2 to ref genomes
+    if (is.null(ref_genome)) {
+      # have to check multiple
+      snp_loc_data_37 <- load_ref_genome_data(
+        snps = snps,
+        ref_genome = "GRCH37",
+        dbSNP = dbSNP
+      )
+      snp_loc_data_38 <- load_ref_genome_data(
+        snps = snps,
+        ref_genome = "GRCH38",
+        dbSNP = dbSNP
+      )
+      # convert CHR filed in ref genomes to character not factor
+      snp_loc_data_37[, seqnames := as.character(seqnames)]
+      snp_loc_data_38[, seqnames := as.character(seqnames)]
+      # convert CHR filed in data to character if not already
+      sumstats[, CHR := as.character(CHR)]
+      # Now check which genome build has more matches to data
+      num_37 <-
+        nrow(snp_loc_data_37[sumstats, ,
+                             on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
+                             nomatch = FALSE
+        ])
+      num_38 <-
+        nrow(snp_loc_data_38[sumstats, ,
+                             on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
+                             nomatch = FALSE
+        ])
+      
+      if (num_37 > num_38) {
+        ref_gen_num <- num_37
+        ref_genome <- "GRCH37"
+        snp_loc_data <- snp_loc_data_37
+      } else {
+        ref_gen_num <- num_38
+        ref_genome <- "GRCH38"
+        snp_loc_data <- snp_loc_data_38
+      }
+    } else {
+      # only check one chosen
+      snp_loc_data <- load_ref_genome_data(
+        snps = snps,
+        ref_genome = ref_genome,
+        dbSNP = dbSNP
+      )
+      # convert CHR filed in ref genomes to character not factor
+      snp_loc_data[, seqnames := as.character(seqnames)]
+      # convert CHR filed in data to character if not already
+      sumstats[, CHR := as.character(CHR)]
+    }
+    # Now check which allele has more matches to data
+    # want to match on ref and alt alleles too
+    # need to take first alt from list to do this
+    snp_loc_data[, alt_alleles := unlist(lapply(
+      alt_alleles,
+      function(x) x[[1]]
+    ))]
+    num_a1 <-
+      nrow(snp_loc_data[sumstats, ,
+                        on = c(
+                          "SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR",
+                          "ref_allele" = "A1", "alt_alleles" = "A2"
+                        ),
+                        nomatch = FALSE
+      ])
+    num_a2 <-
+      nrow(snp_loc_data[sumstats, ,
+                        on = c(
+                          "SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR",
+                          "ref_allele" = "A2", "alt_alleles" = "A1"
+                        ),
+                        nomatch = FALSE
+      ])
+    
+    if (num_a1 >= num_a2) {
+      message("Effect/frq column(s) relate to A2 in the inputted sumstats")
+      # this is what MSS expects so no action required
+      switch_req <- FALSE
+    } else { # num_a1<num_a2
+      message("Effect/frq column(s) relate to A1 in the inputted sumstats")
+      switch_req <- TRUE
+    }
+    
+    return(switch_req)
+  } else {
+    # 2. checking for ref genome
+    # otherwise SNP, CHR, BP were all found and can infer
+    snp_loc_data_37 <- load_ref_genome_data(
+      snps = snps,
+      ref_genome = "GRCH37",
+      dbSNP = dbSNP,
+      chr_filt = chr_filt
+    )
+    snp_loc_data_38 <- load_ref_genome_data(
+      snps = snps,
+      ref_genome = "GRCH38",
+      dbSNP = dbSNP,
+      chr_filt = chr_filt
+    )
+    # convert CHR filed in ref genomes to character not factor
+    snp_loc_data_37[, seqnames := as.character(seqnames)]
+    snp_loc_data_38[, seqnames := as.character(seqnames)]
+    # convert CHR filed in data to character if not already
+    sumstats[, CHR := as.character(CHR)]
+    # Now check which genome build has more matches to data
+    num_37 <-
+      nrow(snp_loc_data_37[sumstats, ,
+                           on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
+                           nomatch = FALSE
+      ])
+    num_38 <-
+      nrow(snp_loc_data_38[sumstats, ,
+                           on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
+                           nomatch = FALSE
+      ])
+    # if no matches throw error
+    if (num_37 == 0 && num_38 == 0) {
+      msg_err <-
+        paste0(
+          "No matches found in either reference genome for your ",
+          "SNPs.\nPlease check their formatting (SNP, CHR and BP",
+          " columns) or supply the genome build."
+        )
+      stop(msg_err)
+    }
+    if (num_37 > num_38) {
+      ref_gen_num <- num_37
+      ref_genome <- "GRCH37"
+    } else {
+      ref_gen_num <- num_38
+      ref_genome <- "GRCH38"
+    }
+    
+    message("Inferred genome build: ", ref_genome)
+    # add a warning if low proportion of matches found
+    msg <- paste0(
+      "WARNING: Less than 10% of your sampled SNPs matched that of ",
+      "either reference genome, this may question the quality of ",
+      "your summary statistics file."
+    )
+    if (ref_gen_num / length(snps) < 0.1) {
+      message(msg)
+    }
+    return(ref_genome)
+  }
+}
+
+
+#' Get Available Memory on the System
+#'
+#' This helper function determines the total available memory on the system,
+#' which can be used to dynamically allocate resources for memory-intensive tasks.
+#'
+#' @return Numeric value representing the total memory in megabytes (MB)
+get_available_memory <- function() {
+  if (Sys.info()["sysname"] == "Windows") {
+    # On Windows, estimate memory (simplified, may vary by system)
+    # Define the input
+    system_output <- system("wmic OS get TotalVisibleMemorySize /Value", intern = TRUE)
+    as.numeric(sub(".*=(\\d+).*", "\\1", system_output[3])) / 1024
+  } else {
+    # On Unix-based systems, use 'free' command
+    as.numeric(system("free -m | awk '/Mem:/ {print $2}'", intern = TRUE))
+  }
 }
 
 
@@ -491,269 +724,6 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   return(list(susie.res = susie.res))
 }
 
-#' Infers the genome build of the summary statistics file (GRCh37 or GRCh38)
-#' from the data. Uses SNP (RSID) & CHR & BP to get genome build.
-#'
-#' @param sumstats data table/data frame obj of the summary statistics file for
-#' the GWAS ,or file path to summary statistics file.
-#' @param nThread Number of threads to use for parallel processes.
-#' @param sampled_snps Downsample the number of SNPs used when inferring genome
-#' build to save time.
-#' @param standardise_headers Run
-#' @param standardise_headers Run
-#' \code{standardise_sumstats_column_headers_crossplatform}.
-#' @param mapping_file \pkg{MungeSumstats} has a pre-defined
-#' column-name mapping file
-#' which should cover the most common column headers and their interpretations.
-#' However, if a column header that is in your file is missing of the mapping we
-#' give is incorrect you can supply your own mapping file. Must be a 2 column
-#' dataframe with column names "Uncorrected" and "Corrected". See
-#' \code{data(sumstatsColHeaders)} for default mapping and necessary format.
-#' @param dbSNP version of dbSNP to be used (144 or 155). Default is 155.
-#' @param header_only Instead of reading in the entire \code{sumstats} file,
-#' only read in the first N rows where N=\code{sampled_snps}.
-#' This should help speed up cases where you have to read in \code{sumstats}
-#' from disk each time.
-#' @param allele_match_ref Instead of returning the genome_build this will
-#' return the propotion of matches to each genome build for each allele (A1,A2).
-#' @inheritParams format_sumstats
-#' @inheritParams get_genome_builds
-#'
-#' @return ref_genome the genome build of the data
-#' @importFrom data.table setDT :=
-#' @keywords internal
-get_genome_build <- function(dataset,
-                             dbSNP = 155) {
-  ### Add this to avoid confusing BiocCheck
-  seqnames <- CHR <- SNP <- BP <- alt_alleles <- NULL
-  sumstats <- data.table::setDT(sumstats)
-  # need SNP ID column (RS ID) CHR and BP (POS) to infer build
-  # - check these are present, considering all known names
-  if (standardise_headers) {
-    sumstats_return <-
-      standardise_sumstats_column_headers_crossplatform(
-        sumstats_dt = sumstats,
-        mapping_file = mapping_file
-      )
-    sumstats <- sumstats_return$sumstats_dt
-  }
-
-  err_msg <-
-    paste0(
-      "SNP ID column (RS ID), CHR and BP (POSITION) columns are needed ",
-      "to infer the genome build. These could not be\nfound in your ",
-      "dataset. Please specify the genome build manually to run ",
-      "format_sumstats()."
-    )
-  # Infer genome build using SNP & CHR & BP
-  if (!all(c("SNP", "CHR", "BP") %in% colnames(sumstats))) {
-    # want it returned rather than throwing an error
-    if (isTRUE(allele_match_ref)) {
-      return(err_msg)
-    } else {
-      stop(err_msg)
-    }
-  }
-
-  #### Do some filtering first to avoid errors ####
-  nrow_org <- nrow(sumstats)
-  sumstats <- sumstats[complete.cases(SNP, BP, CHR)]
-  err_msg2 <-
-    paste0(
-      "SNP ID column (RS ID), CHR and BP (POSITION)",
-      "columns are needed to",
-      " infer the genome build.",
-      "These contain too many\nmissing values in",
-      " your dataset to be used.",
-      "Please specify the genome build manually",
-      " to run format_sumstats()"
-    )
-  # also remove common incorrect formatting of SNP
-  sumstats <- sumstats[grepl("^rs", SNP), ]
-  sumstats <- sumstats[SNP != ".", ]
-  # also deal with common misformatting of CHR
-  # if chromosome col has chr prefix remove it
-  sumstats[, CHR := gsub("chr", "", CHR)]
-
-  # for internal testing - filter to specified chromosomes
-  if (!is.null(chr_filt)) {
-    sumstats <- sumstats[CHR %in% chr_filt]
-  }
-
-  # if removing erroneous cases leads to <min(10k,50% org dataset) will fail -
-  # NOT ENOUGH DATA TO INFER
-  nrow_clean <- nrow(sumstats)
-  size_okay <- FALSE
-  if (nrow_clean > sampled_snps || (nrow_clean != 0 &&
-    (nrow_clean / nrow_org) > .5)) {
-    size_okay <- TRUE
-  }
-  if (!size_okay) {
-    # want it returned rather than throwing an error
-    if (isTRUE(allele_match_ref)) {
-      return(err_msg2)
-    } else {
-      stop(err_msg2)
-    }
-  }
-  #### Downsample SNPs to save time ####
-  if ((nrow(sumstats) > sampled_snps) && !(is.null(sampled_snps))) {
-    snps <- sample(sumstats$SNP, sampled_snps)
-  } else { # nrow(sumstats)<10k
-    snps <- sumstats$SNP
-  }
-
-  sumstats <- sumstats[SNP %in% snps, ]
-
-  # now split into functions two roles
-  if (isTRUE(allele_match_ref)) {
-    # 1. checking for matches for A1/A2 to ref genomes
-    if (is.null(ref_genome)) {
-      # have to check multiple
-      snp_loc_data_37 <- load_ref_genome_data(
-        snps = snps,
-        ref_genome = "GRCH37",
-        dbSNP = dbSNP
-      )
-      snp_loc_data_38 <- load_ref_genome_data(
-        snps = snps,
-        ref_genome = "GRCH38",
-        dbSNP = dbSNP
-      )
-      # convert CHR filed in ref genomes to character not factor
-      snp_loc_data_37[, seqnames := as.character(seqnames)]
-      snp_loc_data_38[, seqnames := as.character(seqnames)]
-      # convert CHR filed in data to character if not already
-      sumstats[, CHR := as.character(CHR)]
-      # Now check which genome build has more matches to data
-      num_37 <-
-        nrow(snp_loc_data_37[sumstats, ,
-          on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
-          nomatch = FALSE
-        ])
-      num_38 <-
-        nrow(snp_loc_data_38[sumstats, ,
-          on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
-          nomatch = FALSE
-        ])
-
-      if (num_37 > num_38) {
-        ref_gen_num <- num_37
-        ref_genome <- "GRCH37"
-        snp_loc_data <- snp_loc_data_37
-      } else {
-        ref_gen_num <- num_38
-        ref_genome <- "GRCH38"
-        snp_loc_data <- snp_loc_data_38
-      }
-    } else {
-      # only check one chosen
-      snp_loc_data <- load_ref_genome_data(
-        snps = snps,
-        ref_genome = ref_genome,
-        dbSNP = dbSNP
-      )
-      # convert CHR filed in ref genomes to character not factor
-      snp_loc_data[, seqnames := as.character(seqnames)]
-      # convert CHR filed in data to character if not already
-      sumstats[, CHR := as.character(CHR)]
-    }
-    # Now check which allele has more matches to data
-    # want to match on ref and alt alleles too
-    # need to take first alt from list to do this
-    snp_loc_data[, alt_alleles := unlist(lapply(
-      alt_alleles,
-      function(x) x[[1]]
-    ))]
-    num_a1 <-
-      nrow(snp_loc_data[sumstats, ,
-        on = c(
-          "SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR",
-          "ref_allele" = "A1", "alt_alleles" = "A2"
-        ),
-        nomatch = FALSE
-      ])
-    num_a2 <-
-      nrow(snp_loc_data[sumstats, ,
-        on = c(
-          "SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR",
-          "ref_allele" = "A2", "alt_alleles" = "A1"
-        ),
-        nomatch = FALSE
-      ])
-
-    if (num_a1 >= num_a2) {
-      message("Effect/frq column(s) relate to A2 in the inputted sumstats")
-      # this is what MSS expects so no action required
-      switch_req <- FALSE
-    } else { # num_a1<num_a2
-      message("Effect/frq column(s) relate to A1 in the inputted sumstats")
-      switch_req <- TRUE
-    }
-
-    return(switch_req)
-  } else {
-    # 2. checking for ref genome
-    # otherwise SNP, CHR, BP were all found and can infer
-    snp_loc_data_37 <- load_ref_genome_data(
-      snps = snps,
-      ref_genome = "GRCH37",
-      dbSNP = dbSNP,
-      chr_filt = chr_filt
-    )
-    snp_loc_data_38 <- load_ref_genome_data(
-      snps = snps,
-      ref_genome = "GRCH38",
-      dbSNP = dbSNP,
-      chr_filt = chr_filt
-    )
-    # convert CHR filed in ref genomes to character not factor
-    snp_loc_data_37[, seqnames := as.character(seqnames)]
-    snp_loc_data_38[, seqnames := as.character(seqnames)]
-    # convert CHR filed in data to character if not already
-    sumstats[, CHR := as.character(CHR)]
-    # Now check which genome build has more matches to data
-    num_37 <-
-      nrow(snp_loc_data_37[sumstats, ,
-        on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
-        nomatch = FALSE
-      ])
-    num_38 <-
-      nrow(snp_loc_data_38[sumstats, ,
-        on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
-        nomatch = FALSE
-      ])
-    # if no matches throw error
-    if (num_37 == 0 && num_38 == 0) {
-      msg_err <-
-        paste0(
-          "No matches found in either reference genome for your ",
-          "SNPs.\nPlease check their formatting (SNP, CHR and BP",
-          " columns) or supply the genome build."
-        )
-      stop(msg_err)
-    }
-    if (num_37 > num_38) {
-      ref_gen_num <- num_37
-      ref_genome <- "GRCH37"
-    } else {
-      ref_gen_num <- num_38
-      ref_genome <- "GRCH38"
-    }
-
-    message("Inferred genome build: ", ref_genome)
-    # add a warning if low proportion of matches found
-    msg <- paste0(
-      "WARNING: Less than 10% of your sampled SNPs matched that of ",
-      "either reference genome, this may question the quality of ",
-      "your summary statistics file."
-    )
-    if (ref_gen_num / length(snps) < 0.1) {
-      message(msg)
-    }
-    return(ref_genome)
-  }
-}
 
 #' Extract Credible Sets and Posterior Statistics from a SuSiE Object
 #'

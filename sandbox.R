@@ -9,60 +9,105 @@ library(susieR)
 library(TwoSampleMR)
 
 setwd("~/Code/Coloc_pipeline")
-source("~/Code/Coloc_pipeline/coloc_susie_utils.R")
+source("~/Code/Coloc_pipeline/pipeline_utils.R")
 
-#### Protein first
+# #### Protein first
+# 
+# sum_stat_path <- "N:/EPIC_genetics/Annotated_windows/Annotated_windows/"
+# file_list <- list.files(sum_stat_path, full.names = T, recursive = T)
+# 
+# prot <- "MSMB"
+# restricted_file_list <- file_list[grepl(prot, file_list)]
+# file_name <- "N:/EPIC_genetics/Annotated_windows/Annotated_windows/MSMB_P08118_OID20275/MSMB_P08118_OID20275_rs10993994.rsids.csv"
+#   exp_raw <- read_csv(file_name)
+# # Formatting to ensure that column names are consistent
+# exp_raw <- format_data(exp_raw,
+#   snp_col = "RSID", beta_col = "BETA",
+#   se_col = "SE", log_pval = T, pval_col = "LOG10P",
+#   effect_allele_col = "ALLELE1",
+#   other_allele_col = "ALLELE0",
+#   pos_col = "GENPOS", chr_col = "CHROM", eaf_col = "A1FREQ", min_pval = NA
+# )
+# # Find lead variant and extract region around it
+# 
+# # Find lead variants
+# temp <- exp_raw$pos.exposure[exp_raw$pval.exposure == min(exp_raw$pval.exposure)]
+# cat("Potential lead variants span a range of", max(temp) - min(temp), "kb \n")
+# 
+# ggplot(exp_raw, aes(x = pos.exposure, y = -log10(pval.exposure))) +
+#   geom_point()
+# 
+# # Set broad manual window
+# # exp_data <- exp_raw %>% filter(pos.exposure > 4.25e7 & pos.exposure < 4.3e7)
+# 
+# # Another option if the lead variant is known
+# lead_var <- "rs10993994"
+# lead_pos <- exp_raw$pos.exposure[exp_raw$SNP == lead_var]
+# width <- 250000
+# exp_data <- exp_raw %>% filter(between(pos.exposure, lead_pos - width, lead_pos + width))
+# 
+# 
+# exp_susie <- finemap_susie(
+#   exp_data = exp_data,
+#   N_exp = 34000,
+#   exp_type = "quant",
+#   LD_matrix = NULL, 
+#   plink_loc = "plink", 
+#   bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
+#   max_iter = 1000
+# )
+# 
+# rm(list = setdiff(ls(), "exp_susie"))
+# source("~/Code/Coloc_pipeline/coloc_susie_utils.R")
 
-sum_stat_path <- "N:/EPIC_genetics/Annotated_windows/Annotated_windows/"
-file_list <- list.files(sum_stat_path, full.names = T, recursive = T)
+###### Renal Cancer
 
-prot <- "MSMB"
-restricted_file_list <- file_list[grepl(prot, file_list)]
-file_name <- "N:/EPIC_genetics/Annotated_windows/Annotated_windows/MSMB_P08118_OID20275/MSMB_P08118_OID20275_rs10993994.rsids.csv"
-  exp_raw <- read_csv(file_name)
-# Formatting to ensure that column names are consistent
-exp_raw <- format_data(exp_raw,
-  snp_col = "RSID", beta_col = "BETA",
-  se_col = "SE", log_pval = T, pval_col = "LOG10P",
-  effect_allele_col = "ALLELE1",
-  other_allele_col = "ALLELE0",
-  pos_col = "GENPOS", chr_col = "CHROM", eaf_col = "A1FREQ", min_pval = NA
-)
-# Find lead variant and extract region around it
+out_raw <- fread("N:/EPIC_genetics/Cancer_sumstats/RENAL_multi_ancestry/EURO_ONLY.tsv")
 
-# Find lead variants
-temp <- exp_raw$pos.exposure[exp_raw$pval.exposure == min(exp_raw$pval.exposure)]
-cat("Potential lead variants span a range of", max(temp) - min(temp), "kb \n")
+Manhattan <- function(gwasResults, var) {don <- gwasResults %>% 
+  
+  # Compute chromosome size
+  group_by(Chr) %>% 
+  summarise(chr_len=max(Pos)) %>% 
+  
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(chr_len)-chr_len) %>%
+  dplyr::select(-chr_len) %>%
+  
+  # Add this info to the initial dataset
+  left_join(gwasResults, ., by=c("Chr"="Chr")) %>%
+  
+  # Add a cumulative position of each SNP
+  arrange(Chr, Pos) %>%
+  mutate( BPcum=Pos+tot)
 
-ggplot(exp_raw, aes(x = pos.exposure, y = -log10(pval.exposure))) +
-  geom_point()
+axisdf = don %>% group_by(Chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
 
-# Set broad manual window
-# exp_data <- exp_raw %>% filter(pos.exposure > 4.25e7 & pos.exposure < 4.3e7)
+gg <- ggplot(don, aes(x=BPcum, y=-log10(Pvalue))) +
+  
+  # Show all points
+  geom_point( aes(color=as.factor(Chr)), alpha=0.8, size=1) +
+  geom_hline(yintercept = -log10(5e-8), linetype="dashed", color = "red") +
+  scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
+  
+  # custom X axis:
+  scale_x_continuous(label = axisdf$Chr, breaks= axisdf$center ) +
+  scale_y_continuous(expand = c(0, 0)) +#, limits = c(2, 29) ) +     # remove space between plot area and x axis
+  
+  # Custom the theme:
+  theme_bw() +
+  theme( 
+    legend.position="none",
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  ) +xlab('Position')
+return(gg)
+}
 
-# Another option if the lead variant is known
-lead_var <- "rs10993994"
-lead_pos <- exp_raw$pos.exposure[exp_raw$SNP == lead_var]
-width <- 250000
-exp_data <- exp_raw %>% filter(between(pos.exposure, lead_pos - width, lead_pos + width))
+plot <- Manhattan(out_raw %>% mutate(Chr = chromosome, Pos = base_pair_location, Pvalue = p_value) %>% filter(p_value <1e-5))
 
 
-exp_susie <- finemap_susie(
-  exp_data = exp_data,
-  N_exp = 34000,
-  exp_type = "quant",
-  LD_matrix = NULL, 
-  plink_loc = "plink", 
-  bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
-  max_iter = 1000
-)
-
-rm(list = setdiff(ls(), "exp_susie"))
-source("~/Code/Coloc_pipeline/coloc_susie_utils.R")
-
-###### Cancer second
-
-out_raw <- fread("N:/EPIC_genetics/Cancer_sumstats/ELLIPSE_V2_META_EUROPEAN_Prostate_012121.txt")
 out_raw <- out_raw %>% filter(!is.na(SNP_Id))
 
 lead_var <- "rs10993994"
@@ -131,11 +176,6 @@ sun_lbf <- fread("eQTL_catalogue/Sun2018.lbf_variable.txt.gz")
 
 schmiedel_cs  <- readr::read_tsv("eQTL_catalogue/Schmiedel2018.credible_sets.tsv.gz", show_col_types = FALSE)
 schmiedel_lbf <- fread("eQTL_catalogue/Schmiedel2018.lbf_variable.txt.gz")
-
-
-
-
-
 
 
 
