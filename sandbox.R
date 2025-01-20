@@ -7,175 +7,123 @@ library(tidyr)
 library(coloc)
 library(susieR)
 library(TwoSampleMR)
-
-setwd("~/Code/Coloc_pipeline")
-source("~/Code/Coloc_pipeline/pipeline_utils.R")
-
-# #### Protein first
-# 
-# sum_stat_path <- "N:/EPIC_genetics/Annotated_windows/Annotated_windows/"
-# file_list <- list.files(sum_stat_path, full.names = T, recursive = T)
-# 
-# prot <- "MSMB"
-# restricted_file_list <- file_list[grepl(prot, file_list)]
-# file_name <- "N:/EPIC_genetics/Annotated_windows/Annotated_windows/MSMB_P08118_OID20275/MSMB_P08118_OID20275_rs10993994.rsids.csv"
-#   exp_raw <- read_csv(file_name)
-# # Formatting to ensure that column names are consistent
-# exp_raw <- format_data(exp_raw,
-#   snp_col = "RSID", beta_col = "BETA",
-#   se_col = "SE", log_pval = T, pval_col = "LOG10P",
-#   effect_allele_col = "ALLELE1",
-#   other_allele_col = "ALLELE0",
-#   pos_col = "GENPOS", chr_col = "CHROM", eaf_col = "A1FREQ", min_pval = NA
-# )
-# # Find lead variant and extract region around it
-# 
-# # Find lead variants
-# temp <- exp_raw$pos.exposure[exp_raw$pval.exposure == min(exp_raw$pval.exposure)]
-# cat("Potential lead variants span a range of", max(temp) - min(temp), "kb \n")
-# 
-# ggplot(exp_raw, aes(x = pos.exposure, y = -log10(pval.exposure))) +
-#   geom_point()
-# 
-# # Set broad manual window
-# # exp_data <- exp_raw %>% filter(pos.exposure > 4.25e7 & pos.exposure < 4.3e7)
-# 
-# # Another option if the lead variant is known
-# lead_var <- "rs10993994"
-# lead_pos <- exp_raw$pos.exposure[exp_raw$SNP == lead_var]
-# width <- 250000
-# exp_data <- exp_raw %>% filter(between(pos.exposure, lead_pos - width, lead_pos + width))
-# 
-# 
-# exp_susie <- finemap_susie(
-#   exp_data = exp_data,
-#   N_exp = 34000,
-#   exp_type = "quant",
-#   LD_matrix = NULL, 
-#   plink_loc = "plink", 
-#   bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
-#   max_iter = 1000
-# )
-# 
-# rm(list = setdiff(ls(), "exp_susie"))
-# source("~/Code/Coloc_pipeline/coloc_susie_utils.R")
-
-###### Renal Cancer
-
-out_raw <- fread("N:/EPIC_genetics/Cancer_sumstats/RENAL_multi_ancestry/EURO_ONLY.tsv")
-
-Manhattan <- function(gwasResults, var) {don <- gwasResults %>% 
-  
-  # Compute chromosome size
-  group_by(Chr) %>% 
-  summarise(chr_len=max(Pos)) %>% 
-  
-  # Calculate cumulative position of each chromosome
-  mutate(tot=cumsum(chr_len)-chr_len) %>%
-  dplyr::select(-chr_len) %>%
-  
-  # Add this info to the initial dataset
-  left_join(gwasResults, ., by=c("Chr"="Chr")) %>%
-  
-  # Add a cumulative position of each SNP
-  arrange(Chr, Pos) %>%
-  mutate( BPcum=Pos+tot)
-
-axisdf = don %>% group_by(Chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
-
-gg <- ggplot(don, aes(x=BPcum, y=-log10(Pvalue))) +
-  
-  # Show all points
-  geom_point( aes(color=as.factor(Chr)), alpha=0.8, size=1) +
-  geom_hline(yintercept = -log10(5e-8), linetype="dashed", color = "red") +
-  scale_color_manual(values = rep(c("grey", "skyblue"), 22 )) +
-  
-  # custom X axis:
-  scale_x_continuous(label = axisdf$Chr, breaks= axisdf$center ) +
-  scale_y_continuous(expand = c(0, 0)) +#, limits = c(2, 29) ) +     # remove space between plot area and x axis
-  
-  # Custom the theme:
-  theme_bw() +
-  theme( 
-    legend.position="none",
-    panel.border = element_blank(),
-    panel.grid.major.x = element_blank(),
-    panel.grid.minor.x = element_blank()
-  ) +xlab('Position')
-return(gg)
-}
-
-plot <- Manhattan(out_raw %>% mutate(Chr = chromosome, Pos = base_pair_location, Pvalue = p_value) %>% filter(p_value <1e-5))
-
-
-out_raw <- out_raw %>% filter(!is.na(SNP_Id))
-
-lead_var <- "rs10993994"
-lead_pos <- out_raw$Position[out_raw$SNP_Id == lead_var]
-width <- 25000
-out_raw <- out_raw %>% filter(between(Position, lead_pos - width, lead_pos + width))
-
-sum(out_raw$EA != out_raw$Allele_1)
-# [1] 0
-
-out_data <- TwoSampleMR::format_data(data.frame(out_raw),
-                                     chr_col = "Chromosome",
-                                     pos_col = "Position",
-                                     snp_col = "SNP_Id",
-                                     beta_col = "Estimate_Effect",
-                                     se_col = "SE",
-                                     pval_col = "P_value",
-                                     log_pval = FALSE,
-                                     eaf_col = "EAF_Control",
-                                     effect_allele_col = "Allele_1",
-                                     other_allele_col = "Allele_2")
-
-out_susie <- finemap_susie(
-  exp_data = out_data,
-  N_exp = 180000,
-  exp_type = "cc",
-  exp_sd = 0.48,
-  LD_matrix = NULL, 
-  plink_loc = "plink", 
-  bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
-  max_iter = 1000
-)
-
-rm(list = setdiff(ls(), c("exp_susie", "out_susie")))
-
-
-
-############ Compare with the data available from the eQTL catalogue
-# https://github.com/eQTL-Catalogue/eQTL-Catalogue-resources/blob/master/tutorials/API_v2/eQTL_API_tutorial.md
-# https://github.com/eQTL-Catalogue/eQTL-Catalogue-resources/blob/master/tutorials/coloc.susie/coloc_susie.md
-
 library(httr)
 library(glue)
 library(jsonlite)
 library(ggrepel)
 library(readr)
 
-# See what data is available
+setwd("~/Code/Coloc_pipeline")
+source("~/Code/Coloc_pipeline/pipeline_utils.R")
 
-max_pulled_rows = 1000 #All datasets will be pulled if this parameter is bigger than the actual number of datasets
-URL = glue("https://www.ebi.ac.uk/eqtl/api/v2/datasets/?size={max_pulled_rows}")
-# Make a request
+
+################################################################################
+# List the data available from the eQTL catalogue
+################################################################################
+
+
+# https://github.com/eQTL-Catalogue/eQTL-Catalogue-resources/blob/master/tutorials/API_v2/eQTL_API_tutorial.md
+# https://github.com/eQTL-Catalogue/eQTL-Catalogue-resources/blob/master/tutorials/coloc.susie/coloc_susie.md
+
+max_pulled_rows <- 1000 
+URL <- glue("https://www.ebi.ac.uk/eqtl/api/v2/datasets/?size={max_pulled_rows}")
 r <- GET(URL, accept_json())
-# Check status
-status_code(r)
-# Extract content
 cont <- content(r, "text", encoding = "UTF-8")
-# Convert content to dataframe
 datasets <- fromJSON(cont)
 
 
-# Extract LBF for two random studies
+################################################################################
+# Extract LBF for kidney study
+################################################################################
 
-sun_cs  <- readr::read_tsv("eQTL_catalogue/Sun2018.credible_sets.tsv.gz", show_col_types = FALSE)
-sun_lbf <- fread("eQTL_catalogue/Sun2018.lbf_variable.txt.gz")
 
-schmiedel_cs  <- readr::read_tsv("eQTL_catalogue/Schmiedel2018.credible_sets.tsv.gz", show_col_types = FALSE)
-schmiedel_lbf <- fread("eQTL_catalogue/Schmiedel2018.lbf_variable.txt.gz")
+kid_genexp_cs <- readr::read_tsv("eQTL_catalogue/QTD000261.credible_sets.tsv.gz", show_col_types = FALSE)
+kid_genexp_lbf <- fread("eQTL_catalogue/QTD000261.lbf_variable.txt.gz")
+
+# Merge rsid into kid_genexp_lbf using the variant column and add chr and pos information
+kid_genexp_lbf <- kid_genexp_lbf %>%
+  left_join(select(kid_genexp_cs, variant, rsid, molecular_trait_id), 
+            by = c("variant", "molecular_trait_id"))%>%
+  separate(variant, into = c("chr", "bp", "extra1", "extra2"), sep = "_", remove = FALSE) %>%
+  mutate(
+    chr = str_remove(chr, "chr"),  # Remove "chr" prefix
+    chr = ifelse(chr == "X", "23", chr),  # Replace "X" with "23"
+    chr = as.numeric(chr),
+    bp = as.numeric(bp)
+  )
+
+length(table(kid_genexp_lbf$molecular_trait_id))
+# 424 genes whose expression has been quantified here.
+
+
+################################################################################
+# Load renal cancer data
+################################################################################
+
+
+out_raw <- fread("N:/EPIC_genetics/Cancer_sumstats/RENAL_multi_ancestry/EURO_ONLY.tsv")
+plot_can <- manhattan(out_raw %>% filter(p_value <1e-5), chr="chromosome", bp = "base_pair_location", snp = "rsid", p = "p_value")
+
+can_lead_var <- out_raw[which.min(out_raw$p_value),variant_id]
+# [1] "11_69422827_C_T"
+
+## Keep region around variant 
+
+lead_pos <- out_raw[which.min(out_raw$p_value),base_pair_location]
+width <- 100000
+out_trait_region <- out_raw %>% filter(between(base_pair_location,lead_pos - width, lead_pos + width))
+rm(out_raw)
+
+
+################################################################################
+# Run coloc for a chosen trait
+################################################################################
+
+
+## Select gene expr. where lead variant appears in credible set
+
+candidate_traits <- kid_genexp_lbf$molecular_trait_id[grepl(can_lead_var, kid_genexp_lbf$variant)]
+# [1] "ENSG00000132740" "ENSG00000250508" "ENSG00000197345"
+
+trait <- "ENSG00000132740"
+trait_lfb <- kid_genexp_lbf %>% filter(molecular_trait_id == trait)
+
+## Subset the corresponding region in the cancer outcome data
+# specific to eQTL, will have to be remade for the general case
+# 
+# pos_interval <- str_split_fixed(unique(trait_lfb$region), ":", 2)[,2] 
+# # [1] "67903863-69903863"
+# pos_low  <- as.numeric(str_split(pos_interval, "-")[[1]][1])
+# pos_high <- as.numeric(str_split(pos_interval, "-")[[1]][2])
+
+
+## Format the cancer data
+
+out_trait_region <- TwoSampleMR::format_data(data.frame(out_trait_region),
+                                     chr_col = "chromosome",
+                                     pos_col = "base_pair_location",
+                                     snp_col = "rsid",
+                                     beta_col = "beta",
+                                     se_col = "standard_error",
+                                     pval_col = "p_value",
+                                     log_pval = FALSE,
+                                     eaf_col = "effect_allele_frequency",
+                                     effect_allele_col = "effect_allele",
+                                     other_allele_col = "other_allele")
+
+## Run the finemapping
+
+out_trait_susie <- finemap_susie(
+  exp_data = out_trait_region,
+  N_exp = 780000,
+  exp_type = "cc",
+  exp_sd = 0.034,
+  LD_matrix = NULL, 
+  plink_loc = "plink", 
+  bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
+  max_iter = 1000
+)
+
 
 
 
