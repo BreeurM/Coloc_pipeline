@@ -44,6 +44,48 @@ get_available_memory <- function() {
   }
 }
 
+# Functions for managing temporary files in a specified directory
+
+#' Create an empty temporary directory
+#'
+#' @param path The path to the directory to create
+#'
+set.temp.dir <- function(path) {
+  if (dir.exists(path)) {
+    unlink(path, recursive = TRUE, force = TRUE) # Remove existing directory and contents
+  }
+  dir.create(path, recursive = TRUE, showWarnings = FALSE) # Create a new empty directory
+  return(path)
+}
+
+#' Create a temporary file in the specified directory
+#'
+#' @param name The name of the file to create
+#' @param dir The directory where the file should be created
+#'
+#' @return The full path to the created file
+#'
+#' @throws Error if the temporary directory is not specified
+#'
+temp.file <- function(name, dir = NULL) {
+  if (is.null(dir)) {
+    stop("Temporary directory not specified. Use set.temp.dir first.")
+  }
+  file_path <- file.path(dir, name)
+  file.create(file_path) # Create the file
+  return(file_path) # Return the file path
+}
+
+#' Delete the temporary directory and its contents
+#'
+#' @param path The path to the directory to delete
+#'
+cleanup.temp.dir <- function(path) {
+  if (dir.exists(path)) {
+    unlink(path, recursive = TRUE, force = TRUE) # Remove directory and all contents
+  }
+}
+
 
 #' Read and format exposure or outcome data
 #' Checks and organises columns for use with MR or enrichment tests.
@@ -186,7 +228,8 @@ find_proxy_snps <- function(plink_path = "plink",
                             snp_dat,
                             window_size_kb,
                             outcome_dat,
-                            file_list) {
+                            file_list,
+                            temp_file_path) {
   # Check if PLINK is installed
   if (system(paste(plink_path, "--version"), ignore.stdout = TRUE) != 0) {
     stop("PLINK not found at the specified path. Please provide the correct path to the PLINK executable.")
@@ -195,7 +238,8 @@ find_proxy_snps <- function(plink_path = "plink",
   cat("Extracting SNPs in a", window_size_kb, "kb window around", snp_dat$SNP, "\n")
 
   # Execute PLINK command
-  extracted_snps_file <- tempfile("extracted_snps", fileext = ".txt")
+  set.temp.dir(temp_file_path)
+  extracted_snps_file <- temp.file("extracted_snps.txt", temp_file_path)
   cmd <- paste(
     plink_path, "--bfile", bfile_prefix,
     "--snp", snp_dat$SNP,
@@ -218,6 +262,8 @@ find_proxy_snps <- function(plink_path = "plink",
       data.frame()
     }
   )
+
+  cleanup.temp.dir(temp_file_path)
 
   if (dim(extracted_snps)[1] > 0) {
     cat("Extracted", dim(extracted_snps)[1], "SNPs around", snp_dat$SNP, "\n")
@@ -374,12 +420,13 @@ get_ld_matrix_1000g <- function(rsid_list, with_alleles = T) {
 #' @importFrom stats as.matrix
 #' @author K. Smith-Byrne, M. Breeur
 #' @export
-get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory = NULL, with_alleles = TRUE) {
+get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory = NULL, with_alleles = TRUE, temp_dir_path = NULL) {
   # Determine shell type based on operating system
   shell <- ifelse(Sys.info()["sysname"] == "Windows", "cmd", "sh")
 
   # Create a temporary file to store rsID list
-  fn <- tempfile()
+  set.temp.dir(temp_dir_path)
+  fn <- temp.file("extracted_snp", temp_dir_path)
   write.table(data.frame(rsid_list),
     file = fn, row.names = FALSE,
     col.names = FALSE, quote = FALSE
@@ -426,14 +473,15 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
   }
 
   # Clean up temporary files
-  tryCatch(expr = {
-    file.remove(list.files(tempdir(), pattern = ".ld", recursive = TRUE, full.names = TRUE))
-    file.remove(list.files(tempdir(), pattern = ".bim", recursive = TRUE, full.names = TRUE))
-    file.remove(list.files(tempdir(), pattern = ".log", recursive = TRUE, full.names = TRUE))
-    file.remove(list.files(tempdir(), pattern = ".nosex", recursive = TRUE, full.names = TRUE))
-    }, error = function(e) {
-    warning("Temporary files used for LD computation could not be removed.")
-  })
+  cleanup.temp.dir(temp_dir_path)
+  # tryCatch(expr = {
+  #   file.remove(list.files(tempdir(), pattern = ".ld", recursive = TRUE, full.names = TRUE))
+  #   file.remove(list.files(tempdir(), pattern = ".bim", recursive = TRUE, full.names = TRUE))
+  #   file.remove(list.files(tempdir(), pattern = ".log", recursive = TRUE, full.names = TRUE))
+  #   file.remove(list.files(tempdir(), pattern = ".nosex", recursive = TRUE, full.names = TRUE))
+  #   }, error = function(e) {
+  #   warning("Temporary files used for LD computation could not be removed.")
+  # })
 
   return(res)
 }
@@ -629,13 +677,14 @@ zz_plot <- function(LD_Mat, lead_SNP = NULL, Harm_dat, coloc_SNP,
 #'
 #' @return A SuSiE colocalization result object (`susie.res`) containing information on shared genetic signals between the exposure and outcome datasets.
 #'         If SuSiE fails to converge for either dataset, the function returns `NULL`.
-#'         
+#'
 #' @author M.Breeur
 main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                        out_data, N_out, out_type, out_sd = 1,
                        LD_matrix = NULL, plink_loc = "plink", bfile_loc = NULL,
                        zz_plot = FALSE, lead_snp = NULL, coloc_snp = NULL,
-                       exp_coverage = .95, out_coverage = .95) {
+                       exp_coverage = .95, out_coverage = .95,
+                       temp_dir_path = "~/Temp") {
   # Check input consistency
 
   # Import exposure and outcome data if provided as file paths
@@ -659,12 +708,19 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   if (is.null(LD_matrix)) {
     if (is.null(bfile_loc) | is.null(plink_loc)) {
       warning("Either bfile_loc or plink_loc is missing. Getting LD matrix from 1000G in TwoSampleMR.")
-      LD_matrix <- tryCatch(expr = {get_ld_matrix_1000g(harm_data$SNP, with_alleles = T)$LD_Anal}, error = function(e) {
+      LD_matrix <- tryCatch(expr = {
+        get_ld_matrix_1000g(harm_data$SNP, with_alleles = T)$LD_Anal
+      }, error = function(e) {
         stop("Window too large, SNP list must be smaller than 500. Try reducing window or provide a local ld reference.")
         NULL
       })
     } else {
-      LD_matrix <- get_ld_matrix_from_bim(harm_data$SNP, plink_loc = plink_loc, bfile_loc = bfile_loc, with_alleles = T)
+      LD_matrix <- get_ld_matrix_from_bim(harm_data$SNP,
+        plink_loc = plink_loc,
+        bfile_loc = bfile_loc,
+        with_alleles = T,
+        temp_dir_path = temp_dir_path
+      )
     }
   } else {
     if (is.character(LD_matrix)) {
@@ -732,7 +788,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       # eaf.exposure
     )
   exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
-  colnames(exp_for_coloc) <- c("beta", "varbeta", "snp") #, "MAF")
+  colnames(exp_for_coloc) <- c("beta", "varbeta", "snp") # , "MAF")
   exp_for_coloc <- as.list(exp_for_coloc)
   exp_for_coloc$type <- exp_type
   if (exp_type == "quant") {
@@ -752,7 +808,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       # eaf.outcome
     )
   out_for_coloc$se.outcome <- out_for_coloc$se.outcome^2
-  colnames(out_for_coloc) <- c("beta", "varbeta", "snp")# "MAF")
+  colnames(out_for_coloc) <- c("beta", "varbeta", "snp") # "MAF")
   out_for_coloc <- as.list(out_for_coloc)
   out_for_coloc$type <- out_type
   if (out_type == "quant") {
@@ -768,11 +824,12 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   zz <- NULL
   if (is.null(coloc_snp)) {
-    if (ABF[["summary"]][["PP.H4.abf"]] > .5)
+    if (ABF[["summary"]][["PP.H4.abf"]] > .5) {
       coloc_snp <- ABF$results$snp[which.max(ABF$results$SNP.PP.H4)]
-  }else{
-    warning("No coloc_snp specified for the zz plot, could not be inferred from coloc results. No plot returned.")
-    zz_plot <- FALSE
+    } else {
+      warning("No coloc_snp specified for the zz plot, could not be inferred from coloc results. No plot returned.")
+      zz_plot <- FALSE
+    }
   }
   if (zz_plot) {
     zz <- zz_plot(
@@ -792,7 +849,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     alignment_check = check_alignment(exp_for_coloc)
   )
   if (exp_qc$alignment_check < 0.7) {
-    warning("Suspected alignment error for exposure data.")
+    warning("Possible alignment error for exposure data.")
   }
 
   out_qc <- list(
@@ -800,7 +857,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       out_for_coloc$LD,
       n = N_out
     ),
-    alignment_check = check.alignment(out_for_coloc)
+    alignment_check = check_alignment(out_for_coloc)
   )
   if (out_qc$alignment_check < 0.7) {
     warning("Suspected alignment error for outcome data.")
@@ -871,41 +928,47 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
 format_main_coloc_results <- function(res.coloc) {
   # Define the column names for the output data frame
-  cols <- c("coloc_method", "nsnps", "hit1", "hit2", "PP.H0.abf", "PP.H1.abf", 
-            "PP.H2.abf", "PP.H3.abf", "PP.H4.abf")
-  
+  cols <- c(
+    "coloc_method", "nsnps", "hit1", "hit2", "PP.H0.abf", "PP.H1.abf",
+    "PP.H2.abf", "PP.H3.abf", "PP.H4.abf"
+  )
+
   # Initialize an empty data frame with specified column names
-  df <- data.frame(matrix(ncol = 9, nrow = 0, 
-                          dimnames = list(NULL, cols)))
-  
+  df <- data.frame(matrix(
+    ncol = 9, nrow = 0,
+    dimnames = list(NULL, cols)
+  ))
+
   # Process SuSiE (Sum of Single Effects) coloc results
   res.susie <- res.coloc$coloc.res$susie.res
   if (is.null(res.susie$summary)) {
     # If no summary, add a row with NA values and method set to "susie"
     temp <- data.frame("susie", NA, NA, NA, NA, NA, NA, NA, NA, stringsAsFactors = FALSE)
     colnames(temp) <- cols
-    df <- rbind(df, temp)  # Append to the main data frame
+    df <- rbind(df, temp) # Append to the main data frame
   } else {
     # If summary exists, select relevant columns and add method "susie"
-    temp <- res.susie$summary %>% select(nsnps, hit1, hit2, 
-                                         PP.H0.abf, PP.H1.abf, PP.H2.abf, PP.H3.abf, PP.H4.abf)
+    temp <- res.susie$summary %>% select(
+      nsnps, hit1, hit2,
+      PP.H0.abf, PP.H1.abf, PP.H2.abf, PP.H3.abf, PP.H4.abf
+    )
     temp$coloc_method <- "susie"
-    df <- rbind(df, temp)  # Append to the main data frame
+    df <- rbind(df, temp) # Append to the main data frame
   }
-  
+
   # Process vanilla ABF (Approximate Bayes Factor) coloc results
   res.abf <- res.coloc$coloc.res$abf.res
-  
+
   # Identify the lead SNP with the highest posterior probability for hypothesis H4
   lead_snp <- res.abf$results$snp[which.max(res.abf$results$SNP.PP.H4)]
-  
+
   # Transform the ABF summary to a data frame and add hit1, hit2, and method "vanilla"
   temp <- data.frame(t(res.abf$summary)) %>%
     mutate(hit1 = lead_snp, hit2 = lead_snp, coloc_method = "vanilla")
-  
+
   # Append the ABF results to the main data frame
   df <- rbind(df, temp)
-  
+
   # Return the formatted data frame
   return(df)
 }
@@ -951,7 +1014,9 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   if (is.null(LD_matrix)) {
     if (is.null(bfile_loc) | is.null(plink_loc)) {
       warning("Either bfile_loc or plink_loc is missing. Getting LD matrix from 1000G in TwoSampleMR.")
-      LD_matrix <- tryCatch(expr = {get_ld_matrix_1000g(harm_data$SNP, with_alleles = T)$LD_Anal}, error = function(e) {
+      LD_matrix <- tryCatch(expr = {
+        get_ld_matrix_1000g(harm_data$SNP, with_alleles = T)$LD_Anal
+      }, error = function(e) {
         stop("Window too large, SNP list must be smaller than 500. Try reducing window or provide a local ld reference.")
         NULL
       })
@@ -966,7 +1031,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   # Check if allele information is present in the LD matrix and align if necessary
   if (!(all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 2])) &
-        all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 3])))) {
+    all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 3])))) {
     # Handle case where allele information is missing or incorrect
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Z-scores vs. observed Z-scores")
     harm_data <- harm_data %>%
@@ -1014,7 +1079,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   # Remove alleles from LD matrix column names for cross ref with ext/out data
   colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
   rownames(LD_matrix) <- colnames(LD_matrix)
-  
+
   # Prepare data for SuSiE colocalization analysis
   exp_for_coloc <- harm_data %>%
     select(
@@ -1039,8 +1104,8 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   # Flags for faulty allele alignment
   exp_qc <- list(
     kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
-                          exp_for_coloc$LD,
-                          n = N_exp
+      exp_for_coloc$LD,
+      n = N_exp
     ),
     alignment_check = check_alignment(exp_for_coloc)
   )
@@ -1094,9 +1159,9 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   # Annotate SuSiE results
   susie.res <- annotate_susie(res, snp, LD)
-  
+
   # Format the data
-  
+
   LBF <- as.matrix(susie.res$lbf_variable)
 
   return(list(susie.res = susie.res))
@@ -1105,26 +1170,26 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
 #' Extract Credible Sets and Posterior Statistics from a SuSiE Object
 #'
-#' This function processes a SuSiE (Sum of Single Effects) object to extract credible sets, 
-#' their purity, and posterior statistics such as posterior means, standard deviations, 
-#' and log Bayes factors. It also identifies overlapping credible sets and computes 
+#' This function processes a SuSiE (Sum of Single Effects) object to extract credible sets,
+#' their purity, and posterior statistics such as posterior means, standard deviations,
+#' and log Bayes factors. It also identifies overlapping credible sets and computes
 #' metrics related to their quality.
 #'
-#' @param susie_object A SuSiE object, typically the result of running `susieR::susie()`, 
-#'                     containing information about credible sets, posterior inclusion 
+#' @param susie_object A SuSiE object, typically the result of running `susieR::susie()`,
+#'                     containing information about credible sets, posterior inclusion
 #'                     probabilities (PIPs), and other statistical metrics.
 #'
 #' @return A list with three data frames:
-#'   \item{cs_df}{A data frame containing credible set information, including size, 
+#'   \item{cs_df}{A data frame containing credible set information, including size,
 #'                log10 Bayes factors, and purity metrics.}
-#'   \item{variant_df}{A data frame with variant-level statistics, including posterior 
+#'   \item{variant_df}{A data frame with variant-level statistics, including posterior
 #'                     means, standard deviations, and inclusion in credible sets.}
 #'   \item{lbf_df}{A data frame with log Bayes factors for each variable across credible sets.}
 #'
-#' @details 
-#' The function identifies credible sets, evaluates their purity based on correlation metrics, 
-#' and flags low-purity sets. Posterior statistics, including means, standard deviations, 
-#' and Bayes factors, are extracted for each variant. Overlapping credible sets are also 
+#' @details
+#' The function identifies credible sets, evaluates their purity based on correlation metrics,
+#' and flags low-purity sets. Posterior statistics, including means, standard deviations,
+#' and Bayes factors, are extracted for each variant. Overlapping credible sets are also
 #' tracked and excluded from certain outputs.
 #'
 #' @importFrom dplyr as_tibble mutate filter select bind_cols left_join
@@ -1135,105 +1200,105 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 #' @export
 extractResults <- function(susie_object) {
   # Extract credible sets from the susie_object
-  credible_sets = susie_object$sets$cs
-  cs_list = list()
-  
+  credible_sets <- susie_object$sets$cs
+  cs_list <- list()
+
   # Initialize purity data and add additional columns for analysis
-  susie_object$sets$purity = dplyr::as_tibble(susie_object$sets$purity) %>%
+  susie_object$sets$purity <- dplyr::as_tibble(susie_object$sets$purity) %>%
     dplyr::mutate(
-      cs_id = rownames(susie_object$sets$purity),  # Add credible set ID
-      cs_size = NA,                                # Initialize size of credible set
-      cs_log10bf = NA,                             # Initialize log10 Bayes factor
-      overlapped = NA                              # Initialize overlap flag
+      cs_id = rownames(susie_object$sets$purity), # Add credible set ID
+      cs_size = NA, # Initialize size of credible set
+      cs_log10bf = NA, # Initialize log10 Bayes factor
+      overlapped = NA # Initialize overlap flag
     )
-  
+
   # Track variants already included in credible sets
-  added_variants = c()
-  
+  added_variants <- c()
+
   # Iterate over each credible set
   for (index in seq_along(credible_sets)) {
-    cs_variants = credible_sets[[index]]          # Variants in the current credible set
-    cs_id = susie_object$sets$cs_index[[index]]   # Index of the credible set
-    
+    cs_variants <- credible_sets[[index]] # Variants in the current credible set
+    cs_id <- susie_object$sets$cs_index[[index]] # Index of the credible set
+
     # Check if any variants overlap with previously added sets
-    is_overlapped = any(cs_variants %in% added_variants)
-    susie_object$sets$purity$overlapped[index] = is_overlapped
-    susie_object$sets$purity$cs_size[index] = length(cs_variants)  # Size of credible set
-    susie_object$sets$purity$cs_log10bf[index] = log10(exp(susie_object$lbf[cs_id]))  # Log10 Bayes factor
-    
+    is_overlapped <- any(cs_variants %in% added_variants)
+    susie_object$sets$purity$overlapped[index] <- is_overlapped
+    susie_object$sets$purity$cs_size[index] <- length(cs_variants) # Size of credible set
+    susie_object$sets$purity$cs_log10bf[index] <- log10(exp(susie_object$lbf[cs_id])) # Log10 Bayes factor
+
     # If the set is not overlapping, add it to the results
     if (!is_overlapped) {
-      cs_list[[index]] = dplyr::tibble(
-        cs_id = paste0("L", cs_id),              # Format the credible set ID
-        variant_id = susie_object$variant_id[cs_variants]  # Variants in the credible set
+      cs_list[[index]] <- dplyr::tibble(
+        cs_id = paste0("L", cs_id), # Format the credible set ID
+        variant_id = susie_object$variant_id[cs_variants] # Variants in the credible set
       )
-      added_variants = append(added_variants, cs_variants)  # Update added variants
+      added_variants <- append(added_variants, cs_variants) # Update added variants
     }
   }
-  
+
   # Combine all credible set data into a single data frame
-  df = purrr::map_df(cs_list, identity)
-  
+  df <- purrr::map_df(cs_list, identity)
+
   # Extract purity values for all sets
-  purity_res = susie_object$sets$purity
-  
+  purity_res <- susie_object$sets$purity
+
   # Check for empty purity results; if not empty, process further
   if (nrow(purity_res) > 0) {
-    purity_df = dplyr::as_tibble(purity_res) %>%
-      dplyr::filter(!overlapped) %>%  # Filter out overlapping sets
+    purity_df <- dplyr::as_tibble(purity_res) %>%
+      dplyr::filter(!overlapped) %>% # Filter out overlapping sets
       dplyr::mutate(
-        cs_avg_r2 = mean.abs.corr^2,   # Average R^2
-        cs_min_r2 = min.abs.corr^2,    # Minimum R^2
-        low_purity = min.abs.corr < 0.5  # Flag for low purity
+        cs_avg_r2 = mean.abs.corr^2, # Average R^2
+        cs_min_r2 = min.abs.corr^2, # Minimum R^2
+        low_purity = min.abs.corr < 0.5 # Flag for low purity
       ) %>%
-      dplyr::select(cs_id, cs_log10bf, cs_avg_r2, cs_min_r2, cs_size, low_purity)  # Select relevant columns
+      dplyr::select(cs_id, cs_log10bf, cs_avg_r2, cs_min_r2, cs_size, low_purity) # Select relevant columns
   } else {
-    purity_df = dplyr::tibble()  # Empty purity data frame
+    purity_df <- dplyr::tibble() # Empty purity data frame
   }
-  
+
   # Extract posterior means, standard deviations, and other related values
-  mean_vec = susieR::susie_get_posterior_mean(susie_object)
-  sd_vec = susieR::susie_get_posterior_sd(susie_object)
-  
+  mean_vec <- susieR::susie_get_posterior_mean(susie_object)
+  sd_vec <- susieR::susie_get_posterior_sd(susie_object)
+
   # Extract alpha, mean, and standard deviation matrices
-  alpha_mat = t(susie_object$alpha)
-  colnames(alpha_mat) = paste0("alpha", seq(ncol(alpha_mat)))
-  
-  mean_mat = t(susie_object$alpha * susie_object$mu) / susie_object$X_column_scale_factors
-  colnames(mean_mat) = paste0("mean", seq(ncol(mean_mat)))
-  
-  sd_mat = sqrt(t(susie_object$alpha * susie_object$mu2 - (susie_object$alpha * susie_object$mu)^2)) /
+  alpha_mat <- t(susie_object$alpha)
+  colnames(alpha_mat) <- paste0("alpha", seq(ncol(alpha_mat)))
+
+  mean_mat <- t(susie_object$alpha * susie_object$mu) / susie_object$X_column_scale_factors
+  colnames(mean_mat) <- paste0("mean", seq(ncol(mean_mat)))
+
+  sd_mat <- sqrt(t(susie_object$alpha * susie_object$mu2 - (susie_object$alpha * susie_object$mu)^2)) /
     susie_object$X_column_scale_factors
-  colnames(sd_mat) = paste0("sd", seq(ncol(sd_mat)))
-  
+  colnames(sd_mat) <- paste0("sd", seq(ncol(sd_mat)))
+
   # Extract log Bayes factors for variables
-  lbf_variable_mat = t(susie_object$lbf_variable)
-  colnames(lbf_variable_mat) = paste0("lbf_variable", seq(ncol(lbf_variable_mat)))
-  
+  lbf_variable_mat <- t(susie_object$lbf_variable)
+  colnames(lbf_variable_mat) <- paste0("lbf_variable", seq(ncol(lbf_variable_mat)))
+
   # Create a data frame for posterior statistics
-  posterior_df = dplyr::tibble(
+  posterior_df <- dplyr::tibble(
     variant_id = rownames(alpha_mat),
-    pip = susie_object$pip,        # Posterior inclusion probabilities
-    z = susie_object$z,            # Z-scores
-    posterior_mean = mean_vec,     # Posterior mean
-    posterior_sd = sd_vec          # Posterior standard deviation
+    pip = susie_object$pip, # Posterior inclusion probabilities
+    z = susie_object$z, # Z-scores
+    posterior_mean = mean_vec, # Posterior mean
+    posterior_sd = sd_vec # Posterior standard deviation
   ) %>% dplyr::bind_cols(purrr::map(list(alpha_mat, mean_mat, sd_mat), dplyr::as_tibble))
-  
+
   # Create a data frame for log Bayes factors
-  lbf_df = dplyr::tibble(variant_id = rownames(lbf_variable_mat)) %>%
+  lbf_df <- dplyr::tibble(variant_id = rownames(lbf_variable_mat)) %>%
     dplyr::bind_cols(dplyr::as_tibble(lbf_variable_mat))
-  
+
   # Combine results into final data frames if data is non-empty
-  if (nrow(df) > 0 & nrow(purity_df) > 0 & ncol(lbf_df) > 10) {  # Check data validity
-    cs_df = purity_df  # Credible set data frame
-    variant_df = dplyr::left_join(posterior_df, df, by = "variant_id") %>%
-      dplyr::left_join(cs_df, by = "cs_id")  # Combine variant data
+  if (nrow(df) > 0 & nrow(purity_df) > 0 & ncol(lbf_df) > 10) { # Check data validity
+    cs_df <- purity_df # Credible set data frame
+    variant_df <- dplyr::left_join(posterior_df, df, by = "variant_id") %>%
+      dplyr::left_join(cs_df, by = "cs_id") # Combine variant data
   } else {
-    cs_df = NULL
-    variant_df = NULL
-    lbf_df = NULL
+    cs_df <- NULL
+    variant_df <- NULL
+    lbf_df <- NULL
   }
-  
+
   # Return a list of results
   return(list(cs_df = cs_df, variant_df = variant_df, lbf_df = lbf_df))
 }

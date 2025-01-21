@@ -14,6 +14,8 @@ library(ggrepel)
 setwd("~/Code/Coloc_pipeline")
 source("coloc_susie_utils.R")
 
+temp_dir_path <- "Temp"
+# Path to store the temporary files in. The folder will automatically be created
 
 ################################################################################ 
 # Load and format protein data
@@ -98,7 +100,8 @@ res <- main_coloc(exp_data = exp_data, N_exp = 36000, exp_type = "quant", exp_sd
                out_data = out_data, N_out = 725000, out_type = "cc", out_sd = .002,
                LD_matrix = NULL, plink_loc = "plink", 
                bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
-               zz_plot = TRUE, coloc_snp = lead_var)
+               zz_plot = TRUE, coloc_snp = lead_var,
+               temp_dir_path = temp_dir_path)
 
 
 # To provide custom LD matrix, make sure that the column names are in the format
