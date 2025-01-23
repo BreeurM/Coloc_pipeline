@@ -280,6 +280,20 @@ if(nrow(temp)>0){
 ################################################################################
 
 
+# Flip alleles for exp and out if not consistent. 
+# Hold on, needed? lbfs won't change...
+
+# Compute z-score, variance and fix weight param
+
+###########Python legacy to adapt:
+W = 0.2  # Weight parameter for LBF calculation
+temp["Z"] = temp["beta"] / temp["se"]  # Z-score
+temp["V"] = temp["se"] ** 2  # Variance
+temp["R"] = W ** 2 / (W ** 2 + temp["V"])  # R-score
+temp["lbf"] = 0.5 * (np.log(1 - temp["R"]) + (temp["R"] * temp["Z"] ** 2))
+
+# Run coloc based on lbfs
+
 
 
 
