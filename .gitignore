@@ -1,5 +1,6 @@
 results/
-data/
+data/renal_cancer_lbf
+scripts/legacy
 .Rhistory
 .RData
 plink.exe
