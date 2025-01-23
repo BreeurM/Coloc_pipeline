@@ -12,7 +12,7 @@ library(ggplot2)
 library(ggrepel)
 
 setwd("~/Code/Coloc_pipeline")
-source("coloc_susie_utils.R")
+source("scripts/coloc_utils.R")
 
 temp_dir_path <- "Temp"
 # Path to store the temporary files in. The folder will automatically be created
