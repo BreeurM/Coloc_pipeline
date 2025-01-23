@@ -1,8 +1,6 @@
-practical_gwas/
-PanC_coloc/
-PrC_coloc/
-Polycythaemia_vera/
-eQTL_catalogue/
+results/
+data/
+scripts/legacy
 .Rhistory
 .RData
 plink.exe
