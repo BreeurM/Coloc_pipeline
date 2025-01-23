@@ -874,6 +874,115 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 }
 
 
+#' zz_plot Function
+#'
+#' This function generates a Z-Z scatter plot for two traits (exposure and outcome), where SNPs (Single Nucleotide Polymorphisms)
+#' are color-coded based on their linkage disequilibrium (LD) with a lead SNP. Additionally, the coloc SNP (a key SNP for colocalization analysis) is highlighted.
+#'
+#' @param LD_Mat Dataframe containing the linkage disequilibrium (LD) matrix with SNPs as row names.
+#' @param lead_SNP Character string indicating the lead SNP to be labeled. **Default is `NULL` until I figure out what it was for.**
+#' @param exp_z
+#' @param out_z
+#' @param coloc_SNP Character string specifying the coloc SNP (key SNP to highlight in the plot).
+#' @param exposure_name Character string for the name of the exposure trait (default: unique value from Harm_dat's "exposure" column).
+#' @param outcome_name Character string for the name of the outcome trait (default: unique value from Harm_dat's "outcome" column).
+#'
+#' @return A ggplot object representing the Z-Z plot where SNPs are color-coded based on their LD with the coloc SNP,
+#' and the coloc and lead SNPs are highlighted.
+#'
+#' @examples
+#' zz_plot(LD_Mat, lead_SNP = "rs123", Harm_dat, coloc_SNP = "rs456")
+#'
+#' @author K. Smith-Byrne
+#'
+zz_plot <- function(LD_Mat, lead_SNP = NULL, exp_z, out_z, coloc_SNP,
+                    exposure_name = "exposure",
+                    outcome_name = "outcome") {
+  ## Step 1: Prepare LD Data
+  # Add a column 'RS_number' to the LD matrix that stores SNP identifiers
+  LD_Mat$RS_number <- rownames(LD_Mat)
+  
+  # Subset the LD matrix to retain only the coloc_SNP column for plotting
+  LD_TEMP <- LD_Mat[, c("RS_number", coloc_SNP)]
+  
+  ## Step 2: Merge LD information with harmonized data
+  # Merge the harmonized data (Harm_dat) with the LD data, matching SNP identifiers
+  temp_dat_format <- merge(Harm_dat, LD_TEMP, by.x = "SNP", by.y = "RS_number", all.x = TRUE)
+  
+  # Square the LD values to calculate r^2 for the coloc SNP
+  temp_dat_format[, coloc_SNP] <- temp_dat_format[, coloc_SNP]^2
+  
+  ## Step 3: Handle missing LD values and define LD color categories
+  # Replace NA LD values with 0 for consistency
+  temp_dat_format[, coloc_SNP] <- ifelse(is.na(temp_dat_format[, coloc_SNP]), 0, temp_dat_format[, coloc_SNP])
+  
+  # Create a new 'LD' column categorising LD strength into bins
+  temp_dat_format$LD <- dplyr::case_when(
+    temp_dat_format[, coloc_SNP] > 0 & temp_dat_format[, coloc_SNP] <= 0.2 ~ "LD < 0.2",
+    temp_dat_format[, coloc_SNP] > 0.2 & temp_dat_format[, coloc_SNP] <= 0.4 ~ "0.2 < LD < 0.4",
+    temp_dat_format[, coloc_SNP] > 0.4 & temp_dat_format[, coloc_SNP] <= 0.6 ~ "0.4 < LD < 0.6",
+    temp_dat_format[, coloc_SNP] > 0.6 & temp_dat_format[, coloc_SNP] <= 0.8 ~ "0.6 < LD < 0.8",
+    temp_dat_format[, coloc_SNP] > 0.8 ~ "LD > 0.8",
+    TRUE ~ "No LD" # Default case when none of the above conditions are met
+  )
+  
+  
+  # Replace any remaining NA values in the 'LD' column with "No LD"
+  temp_dat_format$LD <- ifelse(is.na(temp_dat_format$LD), "No LD", temp_dat_format$LD)
+  
+  # Assign the "Lead SNP" label to the coloc SNP
+  temp_dat_format$LD <- ifelse(temp_dat_format$SNP == coloc_SNP, "Lead SNP", temp_dat_format$LD)
+  
+  # Create a flag to highlight the coloc SNP
+  temp_dat_format <- temp_dat_format %>% mutate(coloc_flag = case_when(SNP == coloc_SNP ~ "Yes", TRUE ~ "No"))
+  
+  ## Step 4: Calculate Z-scores for exposure and outcome
+  # Compute Z-scores: beta divided by the standard error
+  temp_dat_format$Z_exp <- temp_dat_format$beta.exposure / temp_dat_format$se.exposure
+  temp_dat_format$Z_out <- temp_dat_format$beta.outcome / temp_dat_format$se.outcome
+  
+  ## Step 5: Generate the Z-Z plot
+  # Use jitter to slightly shift points for better visualization
+  pos <- position_jitter(width = 0.5, seed = 1)
+  
+  # Plot the Z-scores with SNPs color-coded by LD category
+  plot <- temp_dat_format %>%
+    mutate(LD = fct_reorder(LD, get(coloc_SNP))) %>% # Reorder LD levels for better display
+    ggplot(aes(Z_exp, Z_out, color = LD)) +
+    geom_point(size = 2) + # Add scatter points
+    theme_bw() + # Use a clean, black-and-white theme
+    xlab(paste(exposure_name, " Z-score", sep = "")) +
+    ylab(paste(outcome_name, " Z-score", sep = "")) +
+    ggtitle(paste("Z-Z Locus Plot for: ", exposure_name, " and ", outcome_name, sep = "")) +
+    theme(
+      axis.text = element_text(hjust = 1, size = 20),
+      plot.title = element_text(hjust = 0.5, size = 22, face = "bold"),
+      axis.title = element_text(size = 25, face = "bold"),
+      legend.text = element_text(size = 15),
+      legend.title = element_text(size = 20, face = "bold")
+    ) +
+    # Add labels to the lead SNP and coloc SNP
+    geom_label_repel(
+      size = 6,
+      data = temp_dat_format %>% filter(SNP %in% c(lead_SNP, coloc_SNP)),
+      aes(label = SNP), show.legend = FALSE
+    ) +
+    # Customize legend title and colors for LD categories
+    labs(color = "LD with Lead Coloc SNP") +
+    scale_color_manual(values = c(
+      "No LD" = "#D3D3D3",
+      "LD < 0.2" = "#225EA8",
+      "0.2 > LD < 0.4" = "#41B6C4",
+      "0.4 > LD < 0.6" = "#7FCDBB",
+      "0.6 > LD < 0.8" = "#FE9929",
+      "LD > 0.8" = "#8856A7",
+      "Lead SNP" = "#F768A1"
+    ))
+  
+  ## Step 6: Return the final plot
+  return(plot)
+}
+
 
 main_coloc_bf_susie <- function(trait_lbf, sumstats, out_lbf_dir, path_to_out){
   

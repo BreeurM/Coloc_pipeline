@@ -20,6 +20,11 @@ setwd("~/Code/Coloc_pipeline")
 source("~/Code/Coloc_pipeline/scripts/pipeline_utils.R")
 
 
+plink_loc <- "plink"
+bfile_loc <- "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered"
+
+temp_dir_path <- "Temp"
+
 ################################################################################
 # List the data available from the eQTL catalogue
 ################################################################################
@@ -142,6 +147,29 @@ position_covered <- filtered_coverage[(filtered_coverage$start_position <= requi
 
 
 if (nrow(position_covered) > 0) {
+  
+  message("Loading outcome summary stats.")
+  
+  out_raw <- fread(path_to_out)
+  
+  out_trait_region <- out_raw %>%
+    filter(chromosome == lead_chr) %>%
+    filter(between(base_pair_location, pos_low, pos_high))
+  
+  rm(out_raw)
+  
+  out_trait_region <- TwoSampleMR::format_data(data.frame(out_trait_region),
+                                               chr_col = "chromosome",
+                                               pos_col = "base_pair_location",
+                                               snp_col = "rsid",
+                                               beta_col = "beta",
+                                               se_col = "standard_error",
+                                               pval_col = "p_value",
+                                               log_pval = FALSE,
+                                               eaf_col = "effect_allele_frequency",
+                                               effect_allele_col = "effect_allele",
+                                               other_allele_col = "other_allele"
+  )
    
   message(paste0("Region already fine-mapped. Laoding the BFs from ", lbf_directory))
   out_lbf <- readRDS(paste0(
@@ -156,8 +184,8 @@ if (nrow(position_covered) > 0) {
 } else {
   # finemapping needs to be ran
   
-  message(paste0("Region not covered, fine-mapping region", pos_interval, " on chr ", lead_chr))
-
+  message("Loading outcome summary stats.")
+  
   out_raw <- fread(path_to_out)
   # plot_can <- manhattan(out_raw %>% filter(p_value < 1e-5), chr = "chromosome", bp = "base_pair_location", snp = "rsid", p = "p_value")
 
@@ -169,7 +197,8 @@ if (nrow(position_covered) > 0) {
     filter(chromosome == lead_chr) %>%
     filter(between(base_pair_location, pos_low, pos_high))
 
-
+  rm(out_raw)
+  
   out_trait_region <- TwoSampleMR::format_data(data.frame(out_trait_region),
     chr_col = "chromosome",
     pos_col = "base_pair_location",
@@ -184,6 +213,8 @@ if (nrow(position_covered) > 0) {
   )
 
   ## Find out if anything passes the conventional significance threshold
+  
+  message(paste0("Region not covered, fine-mapping region", pos_interval, " on chr ", lead_chr))
 
   if (any(out_trait_region$pval.exposure < 5e-2)) { 
     ## Run the finemapping
@@ -195,8 +226,8 @@ if (nrow(position_covered) > 0) {
       exp_type = "cc",
       exp_sd = 0.034,
       LD_matrix = NULL,
-      plink_loc = "plink",
-      bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
+      plink_loc = plink_loc,
+      bfile_loc = bfile_loc,
       max_iter = 1000,
       repeat_until_convergence = TRUE,
       run_checks = FALSE
@@ -210,6 +241,13 @@ if (nrow(position_covered) > 0) {
         transmute(variant = paste0("chr", chr.exposure, "_", pos.exposure), SNP), by = "SNP")
 
     saveRDS(out_lbf, file = paste0(lbf_directory, "/lbf_chr", lead_chr, "_", pos_interval, ".rds"))
+  } else{
+    message("No variant crosses the significant threshold. Returning BF = 0")
+    
+    out_lbf <- as.data.frame(matrix(0, nrow = nrow(out_trait_region), ncol = 10))%>%
+      setNames(paste0("lbf_variable", 1:10)) %>%
+      mutate(variant = paste0("chr", out_trait_region$chr.exposure, "_", out_trait_region$pos.exposure),
+             SNP = out_trait_region$SNP)
   }
 }
 
@@ -235,5 +273,65 @@ if(nrow(temp)>0){
 }else{
   print("No PP.H4 was greater than 0.5")
 }
+
+
+################################################################################
+# Vanilla coloc from the summary stats
+################################################################################
+
+
+
+
+
+################################################################################
+# ZZ plot
+################################################################################
+
+
+## Query LD matrix for desired region
+
+SNP_list <- trait_lbf$rsid[between(trait_lbf$position, required_start, required_end)]
+
+LD_matrix <- get_ld_matrix_from_bim(SNP_list,
+                                    plink_loc = plink_loc,
+                                    bfile_loc = bfile_loc,
+                                    with_alleles = T,
+                                    temp_dir_path = temp_dir_path)
+
+## Extract lead snp from trait_lbf 
+
+lead_snp <- unique(trait_lbf$rsid[trait_lbf$position == lead_pos])
+
+## Get z scores for exp and out
+
+
+
+## Flip z scores if needed, according to LD_mat
+
+## Into zz_plot fn
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
