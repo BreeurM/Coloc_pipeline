@@ -841,27 +841,46 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   }
 
   # Flags for faulty allele alignment
-  exp_qc <- list(
+
+  if(run_checks)
+  {exp_qc <- list(
     kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
       exp_for_coloc$LD,
       n = N_exp
     ),
-    alignment_check = check_alignment(exp_for_coloc)
+    alignment_check = tryCatch(expr = {
+      check_alignment(exp_for_coloc)
+    }, error = function(e) {
+      warning("Alignment could not be checked.")
+      NULL
+    })
   )
-  if (exp_qc$alignment_check < 0.7) {
-    warning("Possible alignment error for exposure data.")
+  print(exp_qc$alignment_check)
+  if (!is.null(exp_qc$alignment_check)){
+    if(exp_qc$alignment_check < 0.7) {
+      warning("Suspected alignment error.")}
   }
-
-  out_qc <- list(
+  }else{exp_qc <- NULL}
+  
+  if(run_checks)
+  {out_qc <- list(
     kriging = kriging_rss(out_for_coloc$beta / sqrt(out_for_coloc$varbeta),
       out_for_coloc$LD,
-      n = N_out
+      n = N_exp
     ),
-    alignment_check = check_alignment(out_for_coloc)
+    alignment_check = tryCatch(expr = {
+      check_alignment(out_for_coloc)
+    }, error = function(e) {
+      warning("Alignment could not be checked.")
+      NULL
+    })
   )
-  if (out_qc$alignment_check < 0.7) {
-    warning("Suspected alignment error for outcome data.")
+  print(out_qc$alignment_check)
+  if (!is.null(out_qc$alignment_check)){
+    if(out_qc$alignment_check < 0.7) {
+      warning("Suspected alignment error.")}
   }
+  }else{out_qc <- NULL}
 
   # Run SuSiE for fine-mapping and colocalization
   exp_susie <- tryCatch(
