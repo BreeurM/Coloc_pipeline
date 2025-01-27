@@ -684,7 +684,7 @@ main_coloc <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                        LD_matrix = NULL, plink_loc = "plink", bfile_loc = NULL,
                        zz_plot = FALSE, lead_snp = NULL, coloc_snp = NULL,
                        exp_coverage = .95, out_coverage = .95,
-                       temp_dir_path = "~/Temp") {
+                       temp_dir_path = "~/Temp", run_checks = FALSE) {
   # Check input consistency
 
   # Import exposure and outcome data if provided as file paths
