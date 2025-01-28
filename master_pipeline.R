@@ -47,6 +47,7 @@ temp_dir_path <- "Temp"
 
 # kid_genexp_cs <- readr::read_tsv("eQTL_catalogue/QTD000261.credible_sets.tsv.gz", show_col_types = FALSE)
 kid_genexp_lbf <- fread("data/eQTL_catalogue/QTD000261.lbf_variable.txt.gz")
+sumstats <- fread("data/eQTL_catalogue/QTD000261.cc.tsv.gz")
 
 length(table(kid_genexp_lbf$molecular_trait_id))
 # 424 genes whose expression has been quantified here.
@@ -57,55 +58,55 @@ length(table(kid_genexp_lbf$molecular_trait_id))
 ## Pick a trait
 
 trait <- "ENSG00000250508"
-trait_lbf <- kid_genexp_lbf %>% filter(molecular_trait_id == trait)
+trait_data <- kid_genexp_lbf %>% filter(molecular_trait_id == trait)
+
+region <- unique(trait_data$region)
 
 path_to_out <- "N:/EPIC_genetics/Cancer_sumstats/RENAL_multi_ancestry/EURO_ONLY.tsv"
 
 
 ################################################################################
-# Find out region of interest
+# Format and find out region of interest
 ################################################################################
 
 
-## Subset the corresponding region in the cancer outcome data
+## Merge rsid into trait using the variant column and add chr and pos information
 
-lead_chr <- unique(trait_lbf$chr)
-pos_interval <- str_split_fixed(unique(trait_lbf$region), ":", 2)[, 2]
-pos_low <- as.numeric(str_split(pos_interval, "-")[[1]][1])
-pos_high <- as.numeric(str_split(pos_interval, "-")[[1]][2])
-
-
-## Query summary statistics in two batches because window is too large
-
-dataset_id <- "QTD000261"
-
-associations1 <- request_associations(dataset_id, pos_low, (pos_low + pos_high) / 2, as.numeric(lead_chr), trait)
-associations2 <- request_associations(dataset_id, (pos_low + pos_high) / 2 + 1, pos_high, as.numeric(lead_chr), trait)
-
-sumstats <- rbind(associations1, associations2)
-rm(associations1, associations2)
-
-
-## Merge rsid into trait_lbf using the variant column and add chr and pos information
-
-trait_lbf <- trait_lbf %>%
+trait_data <- trait_data %>%
   left_join(
     select(
       sumstats,
       variant,
       rsid,
       molecular_trait_id,
-      pvalue
+      pvalue,
+      beta,
+      se,
+      ref,
+      alt,
+      maf
     ),
     by = c("variant", "molecular_trait_id")
-  ) ## This will be the input into main_coloc_bf_susie
+  ) 
+
+rm(sumstats, kid_genexp_lbf)
+
+trait <- format_data(trait_data, snp_col = "rsid", eaf_col = "maf",
+            effect_allele_col = "ref", other_allele_col = "alt",
+            pval_col = "pvalue", chr_col = "chromosome",
+            pos_col = "position") ## This will be the input into main_coloc_bf_susie
 
 
 ## Find out the 500kB region around min pvalue and whether it is covered
 
-lead_pos <- trait_lbf %>%
-  filter(pvalue == min(pvalue, na.rm = TRUE)) %>%
-  pull(position) %>%
+lead_chr <- unique(trait$chr)
+pos_interval <- str_split_fixed(region, ":", 2)[, 2]
+pos_low <- as.numeric(str_split(pos_interval, "-")[[1]][1])
+pos_high <- as.numeric(str_split(pos_interval, "-")[[1]][2])
+
+lead_pos <- trait %>%
+  filter(pval == min(pvalue, na.rm = TRUE)) %>%
+  pull(pos) %>%
   mean()
 
 required_start <- lead_pos - 500000
@@ -147,30 +148,29 @@ position_covered <- filtered_coverage[(filtered_coverage$start_position <= requi
 
 
 if (nrow(position_covered) > 0) {
-  
   message("Loading outcome summary stats.")
-  
+
   out_raw <- fread(path_to_out)
-  
-  out_trait_region <- out_raw %>%
+
+  out <- out_raw %>%
     filter(chromosome == lead_chr) %>%
     filter(between(base_pair_location, pos_low, pos_high))
-  
+
   rm(out_raw)
-  
-  out_trait_region <- TwoSampleMR::format_data(data.frame(out_trait_region),
-                                               chr_col = "chromosome",
-                                               pos_col = "base_pair_location",
-                                               snp_col = "rsid",
-                                               beta_col = "beta",
-                                               se_col = "standard_error",
-                                               pval_col = "p_value",
-                                               log_pval = FALSE,
-                                               eaf_col = "effect_allele_frequency",
-                                               effect_allele_col = "effect_allele",
-                                               other_allele_col = "other_allele"
+
+  out <- format_data(data.frame(out),
+    chr_col = "chromosome",
+    pos_col = "base_pair_location",
+    snp_col = "rsid",
+    beta_col = "beta",
+    se_col = "standard_error",
+    pval_col = "p_value",
+    log_pval = FALSE,
+    eaf_col = "effect_allele_frequency",
+    effect_allele_col = "effect_allele",
+    other_allele_col = "other_allele"
   )
-   
+
   message(paste0("Region already fine-mapped. Laoding the BFs from ", lbf_directory))
   out_lbf <- readRDS(paste0(
     lbf_directory, "/lbf_chr",
@@ -183,9 +183,9 @@ if (nrow(position_covered) > 0) {
   ))
 } else {
   # finemapping needs to be ran
-  
+
   message("Loading outcome summary stats.")
-  
+
   out_raw <- fread(path_to_out)
   # plot_can <- manhattan(out_raw %>% filter(p_value < 1e-5), chr = "chromosome", bp = "base_pair_location", snp = "rsid", p = "p_value")
 
@@ -193,13 +193,13 @@ if (nrow(position_covered) > 0) {
   # # [1] "11_69422827_C_T"
   #
 
-  out_trait_region <- out_raw %>%
+  out <- out_raw %>%
     filter(chromosome == lead_chr) %>%
     filter(between(base_pair_location, pos_low, pos_high))
 
   rm(out_raw)
-  
-  out_trait_region <- TwoSampleMR::format_data(data.frame(out_trait_region),
+
+  out <- format_data(data.frame(out),
     chr_col = "chromosome",
     pos_col = "base_pair_location",
     snp_col = "rsid",
@@ -213,15 +213,15 @@ if (nrow(position_covered) > 0) {
   )
 
   ## Find out if anything passes the conventional significance threshold
-  
-  message(paste0("Region not covered, fine-mapping region", pos_interval, " on chr ", lead_chr))
 
-  if (any(out_trait_region$pval.exposure < 5e-2)) { 
+  message(paste0("Region not covered, fine-mapping region ", pos_interval, " on chr ", lead_chr))
+
+  if (any(out$pval < 5e-2)) {
     ## Run the finemapping
 
     tic("Running SuSiE")
     out_trait_susie <- finemap_susie(
-      exp_data = out_trait_region,
+      exp_data = out,
       N_exp = 780000,
       exp_type = "cc",
       exp_sd = 0.034,
@@ -237,17 +237,19 @@ if (nrow(position_covered) > 0) {
     out_lbf <- as.data.frame(t(out_trait_susie$lbf_variable)) %>%
       setNames(paste0("lbf_variable", 1:10)) %>%
       rownames_to_column("SNP") %>%
-      left_join(out_trait_region %>%
-        transmute(variant = paste0("chr", chr.exposure, "_", pos.exposure), SNP), by = "SNP")
+      left_join(out %>%
+        transmute(variant = paste0("chr", chr, "_", pos), SNP), by = "SNP")
 
     saveRDS(out_lbf, file = paste0(lbf_directory, "/lbf_chr", lead_chr, "_", pos_interval, ".rds"))
-  } else{
+  } else {
     message("No variant crosses the significant threshold. Returning BF = 0")
-    
-    out_lbf <- as.data.frame(matrix(0, nrow = nrow(out_trait_region), ncol = 10))%>%
+
+    out_lbf <- as.data.frame(matrix(-5, nrow = nrow(out), ncol = 10)) %>%
       setNames(paste0("lbf_variable", 1:10)) %>%
-      mutate(variant = paste0("chr", out_trait_region$chr.exposure, "_", out_trait_region$pos.exposure),
-             SNP = out_trait_region$SNP)
+      mutate(
+        variant = paste0("chr", out$chr, "_", out$pos),
+        SNP = out$SNP
+      )
   }
 }
 
@@ -256,8 +258,8 @@ if (nrow(position_covered) > 0) {
 ################################################################################
 
 
-trait_mat <- as.matrix(dplyr::select(trait_lbf, lbf_variable1:lbf_variable10))
-row.names(trait_mat) <- sub("(_[ACGT]+_[ACGT]+)$", "", trait_lbf$variant)
+trait_mat <- as.matrix(dplyr::select(trait, lbf_variable1:lbf_variable10))
+row.names(trait_mat) <- sub("(_[ACGT]+_[ACGT]+)$", "", trait$variant)
 trait_mat <- t(trait_mat)
 
 
@@ -268,11 +270,13 @@ out_mat <- t(out_mat)
 
 res_coloc <- coloc::coloc.bf_bf(trait_mat, out_mat)
 temp <- res_coloc$summary %>% filter(PP.H4.abf > 0.5)
-if(nrow(temp)>0){
+if (nrow(temp) > 0) {
   print(temp)
-}else{
+} else {
   print("No PP.H4 was greater than 0.5")
 }
+
+rm(trait_mat, out_mat, temp)
 
 
 ################################################################################
@@ -280,22 +284,27 @@ if(nrow(temp)>0){
 ################################################################################
 
 
-# Flip alleles for exp and out if not consistent. 
+# Flip alleles for exp and out if not consistent.
 # Hold on, needed? lbfs won't change...
-
-# Compute z-score, variance and fix weight param
-
-###########Python legacy to adapt:
-W = 0.2  # Weight parameter for LBF calculation
-temp["Z"] = temp["beta"] / temp["se"]  # Z-score
-temp["V"] = temp["se"] ** 2  # Variance
-temp["R"] = W ** 2 / (W ** 2 + temp["V"])  # R-score
-temp["lbf"] = 0.5 * (np.log(1 - temp["R"]) + (temp["R"] * temp["Z"] ** 2))
-
-# Run coloc based on lbfs
+# Will be needed for the MR and maybe the plots but we can opt out for now
 
 
+# Run coloc based on lbfs computed in the format data function
 
+trait_mat <- as.matrix(dplyr::select(trait, lbf)) # %>%
+  # filter(!is.na(lbf)))
+row.names(trait_mat) <- sub("(_[ACGT]+_[ACGT]+)$", "", trait$variant[!is.na(trait$lbf)])
+trait_mat <- t(trait_mat)
+
+
+out_mat <- as.matrix(dplyr::select(out, lbf))
+row.names(out_mat) <- out$variant
+out_mat <- t(out_mat)
+
+res_abf_coloc <- coloc::coloc.bf_bf(trait_mat, out_mat)
+res_abf_coloc$summary$PP.H4.abf > 0.5
+
+rm(trait_mat, out_mat)
 
 ################################################################################
 # ZZ plot
@@ -304,48 +313,35 @@ temp["lbf"] = 0.5 * (np.log(1 - temp["R"]) + (temp["R"] * temp["Z"] ** 2))
 
 ## Query LD matrix for desired region
 
-SNP_list <- trait_lbf$rsid[between(trait_lbf$position, required_start, required_end)]
+SNP_list <- trait$SNP[between(trait$pos, required_start, required_end)]
 
 LD_matrix <- get_ld_matrix_from_bim(SNP_list,
-                                    plink_loc = plink_loc,
-                                    bfile_loc = bfile_loc,
-                                    with_alleles = T,
-                                    temp_dir_path = temp_dir_path)
+  plink_loc = plink_loc,
+  bfile_loc = bfile_loc,
+  with_alleles = T,
+  temp_dir_path = temp_dir_path
+)
 
-## Extract lead snp from trait_lbf 
+## Extract lead snp from trait
 
-lead_snp <- unique(trait_lbf$rsid[trait_lbf$position == lead_pos])
-
-## Get z scores for exp and out
-
-
+lead_snp <- unique(trait$SNP[trait$pos == lead_pos])
 
 ## Flip z scores if needed, according to LD_mat
 
+harm_trait <- align_to_LD(trait, LD_matrix)
+harm_out   <- align_to_LD(out, LD_matrix)
+
+harm_dat <- merge(harm_trait, harm_out)
+
 ## Into zz_plot fn
 
+# Is there a coloc snp?
+
+if(res_abf_coloc$summary$PP.H4.abf > 0.5){
+  # Assign a value to coloc_snp, leave it NULL otherwise
+}
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+zz_plot(as.data.frame(LD_matrix), lead_snp, harm_dat)
 
 

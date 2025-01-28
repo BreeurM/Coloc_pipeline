@@ -26,79 +26,108 @@
 #' @param log_pval The pval is -log10(P). The default is `FALSE`.
 #'
 #' @author Optimised from TwoSampleMR https://github.com/MRCIEU/TwoSampleMR/blob/master/R/read_data.R
-format_dat <- function(dat, suffixe = "", snps = NA,
-                       phenotype_col = NA, snp_col = NA,
-                       beta_col = NA, se_col = NA, eaf_col = NA,
-                       effect_allele_col = NA, other_allele_col = NA,
-                       pval_col = NA, units_col = NA, ncase_col = NA,
-                       ncontrol_col = NA, samplesize_col = NA,
-                       gene_col = NA, id_col = NA, min_pval = 1e-200,
-                       z_col = NA, info_col = NA, chr_col = NA,
-                       pos_col = NA, log_pval = FALSE) {
-  # Check for required SNP column
-  if (!snp_col %in% names(dat)) {
+format_data <- function(dat, header = TRUE, snp_col = "SNP",
+                        beta_col = "beta", se_col = "se", eaf_col = "eaf",
+                        effect_allele_col = "effect_allele",
+                        other_allele_col = "other_allele", pval_col = "pval", min_pval = 1e-200,
+                        z_col = "z", chr_col = "chr",
+                        pos_col = "pos", log_pval = FALSE, 
+                        other_to_keep = c("variant",paste0("lbf_variable", 1:10)), w = .2) {
+  
+  # if (inherits(dat, "data.table")) {
+  #   datname <- deparse(substitute(dat))
+  #   stop(paste0(
+  #     "Your ", datname, " data.frame is also of class 'data.table', ",
+  #     "please reformat as simply a data.frame with ", datname, " <- data.frame(",
+  #     datname, ") and then rerun your format_data() call."
+  #   ))
+  # }
+  
+  all_cols <- c(snp_col, beta_col, se_col, eaf_col, 
+                effect_allele_col, other_allele_col, pval_col,
+                z_col, chr_col, pos_col, other_to_keep)
+  
+  dat <- dat %>%
+    select(any_of(all_cols))
+  
+  if (!(snp_col %in% names(dat))) {
     stop("SNP column not found")
   }
-
-  # Select and standardize relevant columns
-  all_cols <- c(
-    phenotype_col, snp_col, beta_col, se_col, eaf_col,
-    effect_allele_col, other_allele_col, pval_col, units_col,
-    ncase_col, ncontrol_col, samplesize_col, gene_col, id_col,
-    z_col, info_col, chr_col, pos_col
-  )
-
-  all_cols <- allcols[!is.na(all_cols)]
-
+  
   dat <- dat %>%
-    dplyr::select(any_of(all_cols)) %>%
-    rename_with(~"SNP", all_of(snp_col)) %>%
-    mutate(SNP = tolower(SNP) %>% str_replace_all("[[:space:]]", "")) %>%
-    filter(!is.na(SNP))
-
-  # Filter SNPs if provided
-  if (!is.null(snps)) {
-    dat <- dat %>% filter(SNP %in% snps)
+    mutate(SNP = tolower(!!sym(snp_col)) %>% str_replace_all("[[:space:]]", "")) %>%
+    filter(!is.na(SNP)) %>% # Might get rid of it when we switch to chr and pos
+    select(-!!sym(snp_col))
+  
+  if (log_pval) {
+    dat <- dat %>%
+      mutate(pval = 10^-!!sym(pval_col))
+  }
+  
+  dat <- dat %>%
+    mutate(dup = duplicated(SNP)) %>%
+    filter(!dup) %>%
+    select(-dup) 
+  
+  dat <- dat %>%
+    mutate(
+      beta = as.numeric(!!sym(beta_col)),
+      se = as.numeric(!!sym(se_col)),
+      eaf = as.numeric(!!sym(eaf_col)),
+      effect_allele = toupper(as.character(!!sym(effect_allele_col))),
+      other_allele = toupper(as.character(!!sym(other_allele_col))),
+      pval = as.numeric(!!sym(pval_col))
+    ) %>%
+    mutate(
+      beta = ifelse(!is.finite(beta), NA, beta),
+      se = ifelse(!is.finite(se) | se <= 0, NA, se),
+      eaf = ifelse(!is.finite(eaf) | eaf <= 0 | eaf >= 1, NA, eaf),
+      effect_allele = ifelse(!grepl("^[ACTG]+$", effect_allele) & !effect_allele %in% c("D", "I"), NA, effect_allele),
+      other_allele = ifelse(!grepl("^[ACTG]+$", other_allele) & !other_allele %in% c("D", "I"), NA, other_allele),
+      pval = ifelse(!is.finite(pval) | pval < 0 | pval > 1, NA, pval),
+      pval = ifelse(pval < min_pval, min_pval, pval)
+    )
+  
+  if ("beta" %in% names(dat) && "se" %in% names(dat) && !"pval" %in% names(dat)) {
+    dat <- dat %>%
+      mutate(
+        pval = pnorm(abs(beta) / se, lower.tail = FALSE) * 2,
+        pval_origin = "inferred"
+      )
   }
 
-  # Add or rename phenotype column
-  dat <- dat %>% mutate(!!type := if_else(phenotype_col %in% names(dat), phenotype_col, type))
-  if (phenotype_col %in% names(dat) && phenotype_col != type) {
-    dat <- dat %>% dplyr::select(-all_of(phenotype_col))
-  }
-
-  # Convert log p-values if needed
-  if (log_pval && pval_col %in% names(dat)) {
-    dat <- dat %>% mutate(!!pval_col := 10^-(.data[[pval_col]]))
-  }
-
-  # Remove duplicated SNPs
-  dat <- dat %>% distinct(SNP, .keep_all = TRUE)
-
-  # Check and clean columns for MR
-  required_cols <- c(beta_col, se_col, effect_allele_col)
-  optional_cols <- c(other_allele_col, eaf_col)
-
-  if (!all(required_cols %in% names(dat))) {
-    warning("Missing required columns for MR analysis: ", paste(setdiff(required_cols, names(dat)), collapse = ", "))
-    dat <- dat %>% mutate(mr_keep = FALSE)
+  if (z_col %in% names(dat)) {
+    dat <- dat %>%
+      mutate(z = !!sym(z_col))
   } else {
-    dat <- dat %>% mutate(mr_keep = rowSums(across(all_of(required_cols), ~ !is.na(.))) == length(required_cols))
+    dat <- dat %>% mutate(z = beta/se)
   }
-
-  # Infer p-values if missing
-  if (!pval_col %in% names(dat) && all(c(beta_col, se_col) %in% names(dat))) {
-    dat <- dat %>% mutate(!!pval_col := 2 * pnorm(abs(.data[[beta_col]]) / .data[[se_col]], lower.tail = FALSE))
+  
+  if (chr_col %in% names(dat)) {
+    dat <- dat %>%
+      mutate(chr = !!sym(chr_col)) %>%
+      select(-!!sym(chr_col))
   }
-
-  # Generate sample size if missing
-  if (!samplesize_col %in% names(dat) && all(c(ncase_col, ncontrol_col) %in% names(dat))) {
-    dat <- dat %>% mutate(!!samplesize_col := .data[[ncase_col]] + .data[[ncontrol_col]])
+  
+  if (pos_col %in% names(dat)) {
+    dat <- dat %>%
+      mutate(pos = !!sym(pos_col)) %>%
+      select(-!!sym(pos_col))
   }
-
-  # Finalize column names for output
-  dat <- dat %>% rename_with(~ paste0(.x, ".", type), setdiff(names(dat), c("SNP", type)))
-
+  
+  for (col in c("SNP", "beta", "se", "effect_allele", "other_allele", "eaf")) {
+    if (!col %in% names(dat)) {
+      dat[[col]] <- NA
+    }
+  }
+  
+  rownames(dat) <- NULL
+  
+  dat <- dat %>% mutate(variant = paste0("chr", chr, "_", pos),
+                        R = w^2 / (w^2 + se^2), # Calculate R-score
+                        lbf = 0.5 * (log(1 - R) + (R * z^2)) # Calculate log Bayes factor
+  )
+  
   return(dat)
 }
 
@@ -427,103 +456,6 @@ cleanup.temp.dir <- function(path) {
 }
 
 
-# Load necessary package
-library(GenomicRanges)
-
-# Function to filter overlapping regions but keep one representative per overlap group
-group_overlapping_regions <- function(regions, tol = 1000) {
-  # Use regex to correctly extract chromosome, start, and end
-  pattern <- "^(chr[0-9XYM]+):(-?\\d+)-(-?\\d+)$"
-  parsed <- do.call(rbind, lapply(regions, function(x) {
-    matches <- regmatches(x, regexec(pattern, x))[[1]]
-    if (length(matches) == 4) {
-      return(matches[-1])
-    } else {
-      return(c(NA, NA, NA))
-    }
-  }))
-
-  # Convert to data frame
-  df <- data.frame(
-    region = regions,
-    chr = parsed[, 1],
-    start = as.numeric(parsed[, 2]),
-    end = as.numeric(parsed[, 3]),
-    stringsAsFactors = FALSE
-  )
-
-  # Remove any malformed entries
-  df <- df[complete.cases(df), ]
-
-  # # Create a GRanges object
-  # gr <- GRanges(seqnames = df$chr,
-  #               ranges = IRanges(start = df$start, end = df$end))
-  #
-  # # Find overlaps
-  # overlaps <- findOverlaps(gr, gr, ignore.strand = TRUE)
-
-  # Create a vector to store group labels
-  df$groups <- rep(NA, length(gr))
-
-  group_id <- 1
-  # Assign groups to overlapping regions
-  for (temp_chr in names(table(df$chr))) {
-    df_chr <- df %>% filter(chr == temp_chr)
-    for (i in 1:nrow(df_chr)) {
-      if (is.na(df_chr$groups[i])) {
-        s <- df_chr$start[i]
-        e <- df_chr$end[i]
-        candidates <- df_chr %>% filter(abs(start - s) < tol)
-        df_chr$groups[df_chr$region %in% candidates$region] <- group_id
-        df$groups[df$region %in% candidates$region] <- group_id
-        group_id <- group_id + 1
-      }
-    }
-  }
-
-  return(df)
-}
-
-
-#' Query sum stats from eQTL catalogue
-#'
-#' @author Kaur Alasoo: https://github.com/eQTL-Catalogue/eQTL-Catalogue-resources/blob/master/tutorials/API_v2/eQTL_API_tutorial.md
-#' @export
-request_associations <- function(dataset_id, range_start, range_end, chromosome_id, gene_id, offset = 500000){
-  size = 1000
-  start = 0
-  
-  
-  while (TRUE){
-    URL = glue("https://www.ebi.ac.uk/eqtl/api/v2/datasets/{dataset_id}/associations?size={size}&start={start}&pos={chromosome_id}:{range_start}-{range_end}&gene_id={gene_id}")
-    
-    r <- GET(URL, accept_json())
-    cont <- content(r, "text", encoding = "UTF-8")
-    
-    if (status_code(r) != 200) {
-      # Loop will break if the request was unsuccessful
-      if(start==0) {
-        print(glue("Error {status_code(r)}"))
-        print(cont)
-        return()}
-      break
-    }
-    
-    
-    cont_df <- fromJSON(cont)
-    
-    if (start == 0){
-      responses <- cont_df
-    }
-    else{
-      responses <- rbind(responses, cont_df)
-    }
-    start <- start + size
-  }
-  return(responses)
-}
-
-
 #' Generate a Linkage Disequilibrium (LD) Matrix from 1000G
 #'
 #' This function calculates a linkage disequilibrium (LD) matrix for a given list of RSIDs
@@ -665,6 +597,39 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
 }
 
 
+align_to_LD <- function(data,LD_matrix)
+  {
+  LD_alignment <- data.frame(
+  SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
+  LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
+  LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
+  )
+  temp <- merge(data, LD_alignment) %>%
+    mutate(temp_effect_allele = effect_allele,
+           temp_other_allele = other_allele)
+  temp <- temp %>%
+    mutate(
+      flipped = effect_allele != LD_A1,
+      effect_allele = if_else(flipped, temp_other_allele, temp_effect_allele),
+      other_allele = if_else(flipped, temp_effect_allele, temp_other_allele),
+      beta = if_else(flipped, -beta, beta),
+      z = if_else(flipped, -z, z),
+      eaf = if_else(flipped, 1 - eaf, eaf)
+    )
+  
+  if (any(temp$LD_A1 != temp$effect_allele)) {
+    # Stop execution if alleles cannot be aligned
+    n_excl <- sum(temp$LD_A1 != temp$effect_allele)
+    temp <- temp %>% filter(LD_A1 == effect_allele)
+    warning(paste0("Inconsistent alleles when matching to LD matrix. Excluding ", as.character(n_excl), " variants from the analysis."))
+  }
+  
+  return(temp %>% select(-c(temp_other_allele, temp_effect_allele)))
+  }
+
+
+
+
 #' Perform fine mapping with SuSiE on one dataset
 #'
 #' This function implements the SuSiE method for a given dataset amd outputs credible sets and Bayes Factors.
@@ -735,12 +700,11 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     # Handle case where allele information is missing or incorrect
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Z-scores vs. observed Z-scores")
     harm_data <- harm_data %>%
-      mutate(pos = pos.exposure) %>%
       dplyr::select(
         SNP, pos,
-        beta.exposure,
-        se.exposure,
-        eaf.exposure
+        beta,
+        se,
+        eaf
       )
   } else {
     # Flip alleles in harmonized data to align with the LD matrix
@@ -749,14 +713,16 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
       LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
     )
-    temp <- merge(harm_data, LD_alignment)
+    temp <- merge(harm_data, LD_alignment) %>%
+      mutate(temp_effect_allele = effect_allele,
+             temp_other_allele = other_allele)
     temp <- temp %>%
       mutate(
-        flipped = effect_allele.exposure != LD_A1,
-        effect_allele = if_else(flipped, other_allele.exposure, effect_allele.exposure),
-        other_allele = if_else(flipped, effect_allele.exposure, other_allele.exposure),
-        beta.exposure = if_else(flipped, -beta.exposure, beta.exposure),
-        eaf.exposure = if_else(flipped, 1 - eaf.exposure, eaf.exposure)
+        flipped = effect_allele != LD_A1,
+        effect_allele = if_else(flipped, temp_other_allele, temp_effect_allele),
+        other_allele = if_else(flipped, temp_effect_allele, temp_other_allele),
+        beta = if_else(flipped, -beta, beta),
+        eaf = if_else(flipped, 1 - eaf, eaf)
       )
 
     if (any(temp$LD_A1 != temp$effect_allele)) {
@@ -767,12 +733,11 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     }
 
     harm_data <- temp %>%
-      mutate(pos = pos.exposure) %>%
       dplyr::select(
         SNP, pos,
-        beta.exposure,
-        se.exposure,
-        eaf.exposure
+        beta,
+        se,
+        eaf
       )
   }
   toc()
@@ -785,12 +750,12 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   tic("Formatting data for SuSiE")
   exp_for_coloc <- harm_data %>%
     dplyr::select(
-      beta.exposure,
-      se.exposure,
+      beta,
+      se,
       SNP,
-      eaf.exposure
+      eaf
     )
-  exp_for_coloc$se.exposure <- exp_for_coloc$se.exposure^2
+  exp_for_coloc$se <- exp_for_coloc$se^2
   colnames(exp_for_coloc) <- c("beta", "varbeta", "snp", "MAF")
   exp_for_coloc <- as.list(exp_for_coloc)
   exp_for_coloc$type <- exp_type
@@ -827,7 +792,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   toc()}else{exp_qc <- NULL}
 
   # Calculate Z-scores for SuSiE
-  z <- harm_data$beta.exposure / harm_data$se.exposure
+  z <- harm_data$beta / harm_data$se
 
   snp <- harm_data$SNP
   names(z) <- snp
@@ -895,34 +860,35 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 #'
 #' @author K. Smith-Byrne
 #'
-zz_plot <- function(LD_Mat, lead_SNP = NULL, exp_z, out_z, coloc_SNP,
+zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP = NULL,
                     exposure_name = "exposure",
                     outcome_name = "outcome") {
   ## Step 1: Prepare LD Data
   # Add a column 'RS_number' to the LD matrix that stores SNP identifiers
-  LD_Mat$RS_number <- rownames(LD_Mat)
+  colnames(LD_Mat) <- str_split_fixed(colnames(LD_Mat), "_", 3)[,1]
+  LD_Mat$RS_number <- str_split_fixed(rownames(LD_Mat), "_", 3)[,1]
   
-  # Subset the LD matrix to retain only the coloc_SNP column for plotting
-  LD_TEMP <- LD_Mat[, c("RS_number", coloc_SNP)]
+  # Subset the LD matrix to retain only the lead_SNP column for plotting
+  LD_TEMP <- LD_Mat[, c("RS_number", lead_SNP)]
   
   ## Step 2: Merge LD information with harmonized data
   # Merge the harmonized data (Harm_dat) with the LD data, matching SNP identifiers
   temp_dat_format <- merge(Harm_dat, LD_TEMP, by.x = "SNP", by.y = "RS_number", all.x = TRUE)
   
   # Square the LD values to calculate r^2 for the coloc SNP
-  temp_dat_format[, coloc_SNP] <- temp_dat_format[, coloc_SNP]^2
+  temp_dat_format[, lead_SNP] <- temp_dat_format[, lead_SNP]^2
   
   ## Step 3: Handle missing LD values and define LD color categories
   # Replace NA LD values with 0 for consistency
-  temp_dat_format[, coloc_SNP] <- ifelse(is.na(temp_dat_format[, coloc_SNP]), 0, temp_dat_format[, coloc_SNP])
+  temp_dat_format[, lead_SNP] <- ifelse(is.na(temp_dat_format[, lead_SNP]), 0, temp_dat_format[, lead_SNP])
   
   # Create a new 'LD' column categorising LD strength into bins
   temp_dat_format$LD <- dplyr::case_when(
-    temp_dat_format[, coloc_SNP] > 0 & temp_dat_format[, coloc_SNP] <= 0.2 ~ "LD < 0.2",
-    temp_dat_format[, coloc_SNP] > 0.2 & temp_dat_format[, coloc_SNP] <= 0.4 ~ "0.2 < LD < 0.4",
-    temp_dat_format[, coloc_SNP] > 0.4 & temp_dat_format[, coloc_SNP] <= 0.6 ~ "0.4 < LD < 0.6",
-    temp_dat_format[, coloc_SNP] > 0.6 & temp_dat_format[, coloc_SNP] <= 0.8 ~ "0.6 < LD < 0.8",
-    temp_dat_format[, coloc_SNP] > 0.8 ~ "LD > 0.8",
+    temp_dat_format[, lead_SNP] > 0 & temp_dat_format[, lead_SNP] <= 0.2 ~ "LD < 0.2",
+    temp_dat_format[, lead_SNP] > 0.2 & temp_dat_format[, lead_SNP] <= 0.4 ~ "0.2 < LD < 0.4",
+    temp_dat_format[, lead_SNP] > 0.4 & temp_dat_format[, lead_SNP] <= 0.6 ~ "0.4 < LD < 0.6",
+    temp_dat_format[, lead_SNP] > 0.6 & temp_dat_format[, lead_SNP] <= 0.8 ~ "0.6 < LD < 0.8",
+    temp_dat_format[, lead_SNP] > 0.8 ~ "LD > 0.8",
     TRUE ~ "No LD" # Default case when none of the above conditions are met
   )
   
@@ -931,15 +897,13 @@ zz_plot <- function(LD_Mat, lead_SNP = NULL, exp_z, out_z, coloc_SNP,
   temp_dat_format$LD <- ifelse(is.na(temp_dat_format$LD), "No LD", temp_dat_format$LD)
   
   # Assign the "Lead SNP" label to the coloc SNP
-  temp_dat_format$LD <- ifelse(temp_dat_format$SNP == coloc_SNP, "Lead SNP", temp_dat_format$LD)
+  temp_dat_format$LD <- ifelse(temp_dat_format$SNP == lead_SNP, "Lead SNP", temp_dat_format$LD)
   
   # Create a flag to highlight the coloc SNP
-  temp_dat_format <- temp_dat_format %>% mutate(coloc_flag = case_when(SNP == coloc_SNP ~ "Yes", TRUE ~ "No"))
+  temp_dat_format <- temp_dat_format %>% mutate(coloc_flag = case_when(SNP == lead_SNP ~ "Yes", TRUE ~ "No"))
   
   ## Step 4: Calculate Z-scores for exposure and outcome
   # Compute Z-scores: beta divided by the standard error
-  temp_dat_format$Z_exp <- temp_dat_format$beta.exposure / temp_dat_format$se.exposure
-  temp_dat_format$Z_out <- temp_dat_format$beta.outcome / temp_dat_format$se.outcome
   
   ## Step 5: Generate the Z-Z plot
   # Use jitter to slightly shift points for better visualization
@@ -947,8 +911,8 @@ zz_plot <- function(LD_Mat, lead_SNP = NULL, exp_z, out_z, coloc_SNP,
   
   # Plot the Z-scores with SNPs color-coded by LD category
   plot <- temp_dat_format %>%
-    mutate(LD = fct_reorder(LD, get(coloc_SNP))) %>% # Reorder LD levels for better display
-    ggplot(aes(Z_exp, Z_out, color = LD)) +
+    mutate(LD = fct_reorder(LD, get(lead_SNP))) %>% # Reorder LD levels for better display
+    ggplot(aes(z.x, z.y, color = LD)) +
     geom_point(size = 2) + # Add scatter points
     theme_bw() + # Use a clean, black-and-white theme
     xlab(paste(exposure_name, " Z-score", sep = "")) +
@@ -968,7 +932,7 @@ zz_plot <- function(LD_Mat, lead_SNP = NULL, exp_z, out_z, coloc_SNP,
       aes(label = SNP), show.legend = FALSE
     ) +
     # Customize legend title and colors for LD categories
-    labs(color = "LD with Lead Coloc SNP") +
+    labs(color = "LD with Lead SNP") +
     scale_color_manual(values = c(
       "No LD" = "#D3D3D3",
       "LD < 0.2" = "#225EA8",
