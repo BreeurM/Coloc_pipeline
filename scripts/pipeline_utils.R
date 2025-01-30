@@ -1,398 +1,7 @@
-#' Read and format exposure or outcome data
-#' Checks and organises columns for use with MR or enrichment tests.
-#' Infers p-values when possible from beta and se.
-#'
-#' @param dat Data frame. Must have header with at least SNP column present.
-#' @param suffixe Is this the exposure or the outcome data that is being read in? The default is `"exposure"`.
-#' @param snps SNPs to extract. If NULL then doesn't extract any and keeps all. The default is `NULL`.
-#' @param snp_col Required name of column with SNP rs IDs. The default is `"SNP"`.
-#' @param beta_col Required for MR. Name of column with effect sizes. The default is `"beta"`.
-#' @param se_col Required for MR. Name of column with standard errors. The default is `"se"`.
-#' @param eaf_col Required for MR. Name of column with effect allele frequency. The default is `"eaf"`.
-#' @param effect_allele_col Required for MR. Name of column with effect allele. Must contain only the characters "A", "C", "T" or "G". The default is `"effect_allele"`.
-#' @param other_allele_col Required for MR. Name of column with non effect allele. Must contain only the characters "A", "C", "T" or "G". The default is `"other_allele"`.
-#' @param pval_col Required for enrichment tests. Name of column with p-value. The default is `"pval"`.
-#' @param units_col Optional column name for units. The default is `"units"`.
-#' @param ncase_col Optional column name for number of cases. The default is `"ncase"`.
-#' @param ncontrol_col Optional column name for number of controls. The default is `"ncontrol"`.
-#' @param samplesize_col Optional column name for sample size. The default is `"samplesize"`.
-#' @param gene_col Optional column name for gene name. The default is `"gene"`.
-#' @param id_col The default is `"id"`.
-#' @param min_pval Minimum allowed p-value. The default is `1e-200`.
-#' @param z_col The default is `"z"`.
-#' @param info_col The default is `"info_col"`.
-#' @param chr_col The default is `"chr_col"`.
-#' @param pos_col The default is `"pos"`.
-#' @param log_pval The pval is -log10(P). The default is `FALSE`.
-#'
-#' @author Optimised from TwoSampleMR https://github.com/MRCIEU/TwoSampleMR/blob/master/R/read_data.R
-format_data <- function(dat, header = TRUE, snp_col = "SNP",
-                        beta_col = "beta", se_col = "se", eaf_col = "eaf",
-                        effect_allele_col = "effect_allele",
-                        other_allele_col = "other_allele", pval_col = "pval", min_pval = 1e-200,
-                        z_col = "z", chr_col = "chr",
-                        pos_col = "pos", log_pval = FALSE, 
-                        other_to_keep = c("variant",paste0("lbf_variable", 1:10)), w = .2) {
-  
-  # if (inherits(dat, "data.table")) {
-  #   datname <- deparse(substitute(dat))
-  #   stop(paste0(
-  #     "Your ", datname, " data.frame is also of class 'data.table', ",
-  #     "please reformat as simply a data.frame with ", datname, " <- data.frame(",
-  #     datname, ") and then rerun your format_data() call."
-  #   ))
-  # }
-  
-  all_cols <- c(snp_col, beta_col, se_col, eaf_col, 
-                effect_allele_col, other_allele_col, pval_col,
-                z_col, chr_col, pos_col, other_to_keep)
-  
-  dat <- dat %>%
-    select(any_of(all_cols))
-  
-  if (!(snp_col %in% names(dat))) {
-    stop("SNP column not found")
-  }
-  
-  dat <- dat %>%
-    mutate(SNP = tolower(!!sym(snp_col)) %>% str_replace_all("[[:space:]]", "")) %>%
-    filter(!is.na(SNP)) %>% # Might get rid of it when we switch to chr and pos
-    select(-!!sym(snp_col))
-  
-  if (log_pval) {
-    dat <- dat %>%
-      mutate(pval = 10^-!!sym(pval_col))
-  }
-  
-  dat <- dat %>%
-    mutate(dup = duplicated(SNP)) %>%
-    filter(!dup) %>%
-    select(-dup) 
-  
-  dat <- dat %>%
-    mutate(
-      beta = as.numeric(!!sym(beta_col)),
-      se = as.numeric(!!sym(se_col)),
-      eaf = as.numeric(!!sym(eaf_col)),
-      effect_allele = toupper(as.character(!!sym(effect_allele_col))),
-      other_allele = toupper(as.character(!!sym(other_allele_col))),
-      pval = as.numeric(!!sym(pval_col))
-    ) %>%
-    mutate(
-      beta = ifelse(!is.finite(beta), NA, beta),
-      se = ifelse(!is.finite(se) | se <= 0, NA, se),
-      eaf = ifelse(!is.finite(eaf) | eaf <= 0 | eaf >= 1, NA, eaf),
-      effect_allele = ifelse(!grepl("^[ACTG]+$", effect_allele) & !effect_allele %in% c("D", "I"), NA, effect_allele),
-      other_allele = ifelse(!grepl("^[ACTG]+$", other_allele) & !other_allele %in% c("D", "I"), NA, other_allele),
-      pval = ifelse(!is.finite(pval) | pval < 0 | pval > 1, NA, pval),
-      pval = ifelse(pval < min_pval, min_pval, pval)
-    )
-  
-  if ("beta" %in% names(dat) && "se" %in% names(dat) && !"pval" %in% names(dat)) {
-    dat <- dat %>%
-      mutate(
-        pval = pnorm(abs(beta) / se, lower.tail = FALSE) * 2,
-        pval_origin = "inferred"
-      )
-  }
+################################################################################
+# Utility functions - memory and temporary files
+################################################################################
 
-  if (z_col %in% names(dat)) {
-    dat <- dat %>%
-      mutate(z = !!sym(z_col))
-  } else {
-    dat <- dat %>% mutate(z = beta/se)
-  }
-  
-  if (chr_col %in% names(dat)) {
-    dat <- dat %>%
-      mutate(chr = !!sym(chr_col)) %>%
-      select(-!!sym(chr_col))
-  }
-  
-  if (pos_col %in% names(dat)) {
-    dat <- dat %>%
-      mutate(pos = !!sym(pos_col)) %>%
-      select(-!!sym(pos_col))
-  }
-  
-  for (col in c("SNP", "beta", "se", "effect_allele", "other_allele", "eaf")) {
-    if (!col %in% names(dat)) {
-      dat[[col]] <- NA
-    }
-  }
-  
-  rownames(dat) <- NULL
-  
-  dat <- dat %>% mutate(variant = paste0("chr", chr, "_", pos),
-                        R = w^2 / (w^2 + se^2), # Calculate R-score
-                        lbf = 0.5 * (log(1 - R) + (R * z^2)) # Calculate log Bayes factor
-  )
-  
-  return(dat)
-}
-
-#' Infers the genome build of the summary statistics file (GRCh37 or GRCh38)
-#' from the data. Uses SNP (RSID) & CHR & BP to get genome build.
-#'
-#' @param sumstats data table/data frame obj of the summary statistics file for
-#' the GWAS ,or file path to summary statistics file.
-#' @param nThread Number of threads to use for parallel processes.
-#' @param sampled_snps Downsample the number of SNPs used when inferring genome
-#' build to save time.
-#' @param standardise_headers Run
-#' @param standardise_headers Run
-#' \code{standardise_sumstats_column_headers_crossplatform}.
-#' @param mapping_file \pkg{MungeSumstats} has a pre-defined
-#' column-name mapping file
-#' which should cover the most common column headers and their interpretations.
-#' However, if a column header that is in your file is missing of the mapping we
-#' give is incorrect you can supply your own mapping file. Must be a 2 column
-#' dataframe with column names "Uncorrected" and "Corrected". See
-#' \code{data(sumstatsColHeaders)} for default mapping and necessary format.
-#' @param dbSNP version of dbSNP to be used (144 or 155). Default is 155.
-#' @param header_only Instead of reading in the entire \code{sumstats} file,
-#' only read in the first N rows where N=\code{sampled_snps}.
-#' This should help speed up cases where you have to read in \code{sumstats}
-#' from disk each time.
-#' @param allele_match_ref Instead of returning the genome_build this will
-#' return the propotion of matches to each genome build for each allele (A1,A2).
-#' @inheritParams format_sumstats
-#' @inheritParams get_genome_builds
-#'
-#' @return ref_genome the genome build of the data
-#' @importFrom data.table setDT :=
-#' @keywords internal
-get_genome_build <- function(dataset, dbSNP = 155) {
-  ### Add this to avoid confusing BiocCheck
-  seqnames <- CHR <- SNP <- BP <- alt_alleles <- NULL
-  sumstats <- data.table::setDT(sumstats)
-  # need SNP ID column (RS ID) CHR and BP (POS) to infer build
-  # - check these are present, considering all known names
-  if (standardise_headers) {
-    sumstats_return <-
-      standardise_sumstats_column_headers_crossplatform(
-        sumstats_dt = sumstats,
-        mapping_file = mapping_file
-      )
-    sumstats <- sumstats_return$sumstats_dt
-  }
-
-  err_msg <-
-    paste0(
-      "SNP ID column (RS ID), CHR and BP (POSITION) columns are needed ",
-      "to infer the genome build. These could not be\nfound in your ",
-      "dataset. Please specify the genome build manually to run ",
-      "format_sumstats()."
-    )
-  # Infer genome build using SNP & CHR & BP
-  if (!all(c("SNP", "CHR", "BP") %in% colnames(sumstats))) {
-    # want it returned rather than throwing an error
-    if (isTRUE(allele_match_ref)) {
-      return(err_msg)
-    } else {
-      stop(err_msg)
-    }
-  }
-
-  #### Do some filtering first to avoid errors ####
-  nrow_org <- nrow(sumstats)
-  sumstats <- sumstats[complete.cases(SNP, BP, CHR)]
-  err_msg2 <-
-    paste0(
-      "SNP ID column (RS ID), CHR and BP (POSITION)",
-      "columns are needed to",
-      " infer the genome build.",
-      "These contain too many\nmissing values in",
-      " your dataset to be used.",
-      "Please specify the genome build manually",
-      " to run format_sumstats()"
-    )
-  # also remove common incorrect formatting of SNP
-  sumstats <- sumstats[grepl("^rs", SNP), ]
-  sumstats <- sumstats[SNP != ".", ]
-  # also deal with common misformatting of CHR
-  # if chromosome col has chr prefix remove it
-  sumstats[, CHR := gsub("chr", "", CHR)]
-
-  # for internal testing - filter to specified chromosomes
-  if (!is.null(chr_filt)) {
-    sumstats <- sumstats[CHR %in% chr_filt]
-  }
-
-  # if removing erroneous cases leads to <min(10k,50% org dataset) will fail -
-  # NOT ENOUGH DATA TO INFER
-  nrow_clean <- nrow(sumstats)
-  size_okay <- FALSE
-  if (nrow_clean > sampled_snps || (nrow_clean != 0 &&
-    (nrow_clean / nrow_org) > .5)) {
-    size_okay <- TRUE
-  }
-  if (!size_okay) {
-    # want it returned rather than throwing an error
-    if (isTRUE(allele_match_ref)) {
-      return(err_msg2)
-    } else {
-      stop(err_msg2)
-    }
-  }
-  #### Downsample SNPs to save time ####
-  if ((nrow(sumstats) > sampled_snps) && !(is.null(sampled_snps))) {
-    snps <- sample(sumstats$SNP, sampled_snps)
-  } else { # nrow(sumstats)<10k
-    snps <- sumstats$SNP
-  }
-
-  sumstats <- sumstats[SNP %in% snps, ]
-
-  # now split into functions two roles
-  if (isTRUE(allele_match_ref)) {
-    # 1. checking for matches for A1/A2 to ref genomes
-    if (is.null(ref_genome)) {
-      # have to check multiple
-      snp_loc_data_37 <- load_ref_genome_data(
-        snps = snps,
-        ref_genome = "GRCH37",
-        dbSNP = dbSNP
-      )
-      snp_loc_data_38 <- load_ref_genome_data(
-        snps = snps,
-        ref_genome = "GRCH38",
-        dbSNP = dbSNP
-      )
-      # convert CHR filed in ref genomes to character not factor
-      snp_loc_data_37[, seqnames := as.character(seqnames)]
-      snp_loc_data_38[, seqnames := as.character(seqnames)]
-      # convert CHR filed in data to character if not already
-      sumstats[, CHR := as.character(CHR)]
-      # Now check which genome build has more matches to data
-      num_37 <-
-        nrow(snp_loc_data_37[sumstats, ,
-          on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
-          nomatch = FALSE
-        ])
-      num_38 <-
-        nrow(snp_loc_data_38[sumstats, ,
-          on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
-          nomatch = FALSE
-        ])
-
-      if (num_37 > num_38) {
-        ref_gen_num <- num_37
-        ref_genome <- "GRCH37"
-        snp_loc_data <- snp_loc_data_37
-      } else {
-        ref_gen_num <- num_38
-        ref_genome <- "GRCH38"
-        snp_loc_data <- snp_loc_data_38
-      }
-    } else {
-      # only check one chosen
-      snp_loc_data <- load_ref_genome_data(
-        snps = snps,
-        ref_genome = ref_genome,
-        dbSNP = dbSNP
-      )
-      # convert CHR filed in ref genomes to character not factor
-      snp_loc_data[, seqnames := as.character(seqnames)]
-      # convert CHR filed in data to character if not already
-      sumstats[, CHR := as.character(CHR)]
-    }
-    # Now check which allele has more matches to data
-    # want to match on ref and alt alleles too
-    # need to take first alt from list to do this
-    snp_loc_data[, alt_alleles := unlist(lapply(
-      alt_alleles,
-      function(x) x[[1]]
-    ))]
-    num_a1 <-
-      nrow(snp_loc_data[sumstats, ,
-        on = c(
-          "SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR",
-          "ref_allele" = "A1", "alt_alleles" = "A2"
-        ),
-        nomatch = FALSE
-      ])
-    num_a2 <-
-      nrow(snp_loc_data[sumstats, ,
-        on = c(
-          "SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR",
-          "ref_allele" = "A2", "alt_alleles" = "A1"
-        ),
-        nomatch = FALSE
-      ])
-
-    if (num_a1 >= num_a2) {
-      message("Effect/frq column(s) relate to A2 in the inputted sumstats")
-      # this is what MSS expects so no action required
-      switch_req <- FALSE
-    } else { # num_a1<num_a2
-      message("Effect/frq column(s) relate to A1 in the inputted sumstats")
-      switch_req <- TRUE
-    }
-
-    return(switch_req)
-  } else {
-    # 2. checking for ref genome
-    # otherwise SNP, CHR, BP were all found and can infer
-    snp_loc_data_37 <- load_ref_genome_data(
-      snps = snps,
-      ref_genome = "GRCH37",
-      dbSNP = dbSNP,
-      chr_filt = chr_filt
-    )
-    snp_loc_data_38 <- load_ref_genome_data(
-      snps = snps,
-      ref_genome = "GRCH38",
-      dbSNP = dbSNP,
-      chr_filt = chr_filt
-    )
-    # convert CHR filed in ref genomes to character not factor
-    snp_loc_data_37[, seqnames := as.character(seqnames)]
-    snp_loc_data_38[, seqnames := as.character(seqnames)]
-    # convert CHR filed in data to character if not already
-    sumstats[, CHR := as.character(CHR)]
-    # Now check which genome build has more matches to data
-    num_37 <-
-      nrow(snp_loc_data_37[sumstats, ,
-        on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
-        nomatch = FALSE
-      ])
-    num_38 <-
-      nrow(snp_loc_data_38[sumstats, ,
-        on = c("SNP" = "SNP", "pos" = "BP", "seqnames" = "CHR"),
-        nomatch = FALSE
-      ])
-    # if no matches throw error
-    if (num_37 == 0 && num_38 == 0) {
-      msg_err <-
-        paste0(
-          "No matches found in either reference genome for your ",
-          "SNPs.\nPlease check their formatting (SNP, CHR and BP",
-          " columns) or supply the genome build."
-        )
-      stop(msg_err)
-    }
-    if (num_37 > num_38) {
-      ref_gen_num <- num_37
-      ref_genome <- "GRCH37"
-    } else {
-      ref_gen_num <- num_38
-      ref_genome <- "GRCH38"
-    }
-
-    message("Inferred genome build: ", ref_genome)
-    # add a warning if low proportion of matches found
-    msg <- paste0(
-      "WARNING: Less than 10% of your sampled SNPs matched that of ",
-      "either reference genome, this may question the quality of ",
-      "your summary statistics file."
-    )
-    if (ref_gen_num / length(snps) < 0.1) {
-      message(msg)
-    }
-    return(ref_genome)
-  }
-}
 
 
 #' Get Available Memory on the System
@@ -456,6 +65,195 @@ cleanup.temp.dir <- function(path) {
 }
 
 
+
+################################################################################
+# Data formatting
+################################################################################
+
+
+
+#' Read and format exposure or outcome data
+#' Checks and organises columns for use with MR or enrichment tests.
+#' Infers p-values when possible from beta and se.
+#'
+#' @param dat Data frame. Must have header with at least SNP column present.
+#' @param suffixe Is this the exposure or the outcome data that is being read in? The default is `"exposure"`.
+#' @param snps SNPs to extract. If NULL then doesn't extract any and keeps all. The default is `NULL`.
+#' @param snp_col Required name of column with SNP rs IDs. The default is `"SNP"`.
+#' @param beta_col Required for MR. Name of column with effect sizes. The default is `"beta"`.
+#' @param se_col Required for MR. Name of column with standard errors. The default is `"se"`.
+#' @param eaf_col Required for MR. Name of column with effect allele frequency. The default is `"eaf"`.
+#' @param effect_allele_col Required for MR. Name of column with effect allele. Must contain only the characters "A", "C", "T" or "G". The default is `"effect_allele"`.
+#' @param other_allele_col Required for MR. Name of column with non effect allele. Must contain only the characters "A", "C", "T" or "G". The default is `"other_allele"`.
+#' @param pval_col Required for enrichment tests. Name of column with p-value. The default is `"pval"`.
+#' @param units_col Optional column name for units. The default is `"units"`.
+#' @param ncase_col Optional column name for number of cases. The default is `"ncase"`.
+#' @param ncontrol_col Optional column name for number of controls. The default is `"ncontrol"`.
+#' @param samplesize_col Optional column name for sample size. The default is `"samplesize"`.
+#' @param gene_col Optional column name for gene name. The default is `"gene"`.
+#' @param id_col The default is `"id"`.
+#' @param min_pval Minimum allowed p-value. The default is `1e-200`.
+#' @param z_col The default is `"z"`.
+#' @param info_col The default is `"info_col"`.
+#' @param chr_col The default is `"chr_col"`.
+#' @param pos_col The default is `"pos"`.
+#' @param log_pval The pval is -log10(P). The default is `FALSE`.
+#'
+#' @author Optimised from TwoSampleMR https://github.com/MRCIEU/TwoSampleMR/blob/master/R/read_data.R
+format_data <- function(dat, header = TRUE, snp_col = "SNP",
+                        beta_col = "beta", se_col = "se", eaf_col = "eaf",
+                        effect_allele_col = "effect_allele",
+                        other_allele_col = "other_allele", pval_col = "pval", min_pval = 1e-200,
+                        z_col = "z", chr_col = "chr",
+                        pos_col = "pos", log_pval = FALSE,
+                        other_to_keep = NULL, w = .2) {
+  # if (inherits(dat, "data.table")) {
+  #   datname <- deparse(substitute(dat))
+  #   stop(paste0(
+  #     "Your ", datname, " data.frame is also of class 'data.table', ",
+  #     "please reformat as simply a data.frame with ", datname, " <- data.frame(",
+  #     datname, ") and then rerun your format_data() call."
+  #   ))
+  # }
+
+  all_cols <- c(
+    snp_col, beta_col, se_col, eaf_col,
+    effect_allele_col, other_allele_col, pval_col,
+    z_col, chr_col, pos_col, other_to_keep
+  )
+
+  dat <- dat %>%
+    select(any_of(all_cols))
+
+  if (!(snp_col %in% names(dat))) {
+    stop("SNP column not found")
+  }
+
+  dat <- dat %>%
+    mutate(SNP = tolower(!!sym(snp_col)) %>% str_replace_all("[[:space:]]", "")) %>%
+    filter(!is.na(SNP)) %>% # Might get rid of it when we switch to chr and pos
+    select(-!!sym(snp_col))
+
+  if (log_pval) {
+    dat <- dat %>%
+      mutate(pval = 10^-!!sym(pval_col))
+  }
+
+  dat <- dat %>%
+    mutate(dup = duplicated(SNP)) %>%
+    filter(!dup) %>%
+    select(-dup)
+
+  dat <- dat %>%
+    mutate(
+      beta = as.numeric(!!sym(beta_col)),
+      se = as.numeric(!!sym(se_col)),
+      eaf = as.numeric(!!sym(eaf_col)),
+      effect_allele = toupper(as.character(!!sym(effect_allele_col))),
+      other_allele = toupper(as.character(!!sym(other_allele_col))),
+      pval = as.numeric(!!sym(pval_col))
+    ) %>%
+    mutate(
+      beta = ifelse(!is.finite(beta), NA, beta),
+      se = ifelse(!is.finite(se) | se <= 0, NA, se),
+      eaf = ifelse(!is.finite(eaf) | eaf <= 0 | eaf >= 1, NA, eaf),
+      effect_allele = ifelse(!grepl("^[ACTG]+$", effect_allele) & !effect_allele %in% c("D", "I"), NA, effect_allele),
+      other_allele = ifelse(!grepl("^[ACTG]+$", other_allele) & !other_allele %in% c("D", "I"), NA, other_allele),
+      pval = ifelse(!is.finite(pval) | pval < 0 | pval > 1, NA, pval),
+      pval = ifelse(pval < min_pval, min_pval, pval)
+    )
+
+  if ("beta" %in% names(dat) && "se" %in% names(dat) && !"pval" %in% names(dat)) {
+    dat <- dat %>%
+      mutate(
+        pval = pnorm(abs(beta) / se, lower.tail = FALSE) * 2,
+        pval_origin = "inferred"
+      )
+  }
+
+  if (z_col %in% names(dat)) {
+    dat <- dat %>%
+      mutate(z = !!sym(z_col))
+  } else {
+    dat <- dat %>% mutate(z = beta / se)
+  }
+
+  if (chr_col %in% names(dat)) {
+    dat <- dat %>%
+      mutate(chr = !!sym(chr_col)) %>%
+      select(-!!sym(chr_col))
+  }
+
+  if (pos_col %in% names(dat)) {
+    dat <- dat %>%
+      mutate(pos = !!sym(pos_col)) %>%
+      select(-!!sym(pos_col))
+  }
+
+  for (col in c("SNP", "beta", "se", "effect_allele", "other_allele", "eaf")) {
+    if (!col %in% names(dat)) {
+      dat[[col]] <- NA
+    }
+  }
+
+  rownames(dat) <- NULL
+
+  dat <- dat %>% mutate(
+    variant = paste0("chr", chr, "_", pos),
+    R = w^2 / (w^2 + se^2), # Calculate R-score
+    lbf_variable0 = 0.5 * (log(1 - R) + (R * z^2)) # Calculate log Bayes factor
+  )
+
+  return(dat)
+}
+
+
+
+format_eqtl_cat_trait <- function(trait, path_lbf, path_sumstats) {
+  data_lbf <- fread(path_lbf)
+  sumstats <- fread(path_sumstats)
+
+  trait_data <- data_lbf %>% filter(molecular_trait_id == trait)
+
+  trait_data <- trait_data %>%
+    left_join(
+      select(
+        sumstats,
+        variant,
+        rsid,
+        molecular_trait_id,
+        pvalue,
+        beta,
+        se,
+        ref,
+        alt,
+        maf
+      ),
+      by = c("variant", "molecular_trait_id")
+    )
+
+
+  trait <- format_data(trait_data,
+    snp_col = "rsid", eaf_col = "maf",
+    effect_allele_col = "ref", other_allele_col = "alt",
+    pval_col = "pvalue", chr_col = "chromosome",
+    pos_col = "position",
+    other_to_keep = c("variant", "region", paste0("lbf_variable", 1:10))
+  )
+
+  trait$variant <- sub("(_[ACGT]+_[ACGT]+)$", "", trait$variant)
+
+  return(trait)
+}
+
+
+
+################################################################################
+# LD matrices utilites
+################################################################################
+
+
+
 #' Generate a Linkage Disequilibrium (LD) Matrix from 1000G
 #'
 #' This function calculates a linkage disequilibrium (LD) matrix for a given list of RSIDs
@@ -514,18 +312,18 @@ get_ld_matrix_1000g <- function(rsid_list, with_alleles = T) {
 #' @details
 #' The function follows these steps:
 #'
-#' 1. **Identify Shell Type**: Determines whether the system shell is "cmd" (Windows) or "sh" (Unix-based).
-#' 2. **Create Temporary File**: Writes the `rsid_list` to a temporary file for input into PLINK.
-#' 3. **Generate BIM File**:
+#' 1. Identify Shell Type: Determines whether the system shell is "cmd" (Windows) or "sh" (Unix-based).
+#' 2. Create Temporary File: Writes the `rsid_list` to a temporary file for input into PLINK.
+#' 3. Generate BIM File:
 #'    - Constructs a command to run PLINK with `--make-just-bim`, filtering the binary files for SNPs in `rsid_list`.
 #'    - Executes the command and reads the resulting BIM file, which contains SNP metadata.
-#' 4. **Compute LD Matrix**:
+#' 4. Compute LD Matrix:
 #'    - Builds another PLINK command to calculate the LD matrix using `--r square`.
 #'    - Runs the command and reads the resulting LD matrix into R as a numeric matrix.
-#' 5. **Annotate Matrix**:
+#' 5. Annotate Matrix:
 #'    - If `with_alleles = TRUE`, sets matrix row and column names to include rsID and allele information (e.g., rsID_A1_A2).
 #'    - Otherwise, uses only the rsID for row and column names.
-#' 6. **Clean Up**: Deletes all temporary files created during the process.
+#' 6. Clean Up: Deletes all temporary files created during the process.
 #'
 #' @examples
 #' # Example usage:
@@ -597,16 +395,19 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
 }
 
 
-align_to_LD <- function(data,LD_matrix)
-  {
+
+
+align_to_LD <- function(data, LD_matrix) {
   LD_alignment <- data.frame(
-  SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
-  LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
-  LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
+    SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
+    LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
+    LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
   )
   temp <- merge(data, LD_alignment) %>%
-    mutate(temp_effect_allele = effect_allele,
-           temp_other_allele = other_allele)
+    mutate(
+      temp_effect_allele = effect_allele,
+      temp_other_allele = other_allele
+    )
   temp <- temp %>%
     mutate(
       flipped = effect_allele != LD_A1,
@@ -616,18 +417,21 @@ align_to_LD <- function(data,LD_matrix)
       z = if_else(flipped, -z, z),
       eaf = if_else(flipped, 1 - eaf, eaf)
     )
-  
+
   if (any(temp$LD_A1 != temp$effect_allele)) {
     # Stop execution if alleles cannot be aligned
     n_excl <- sum(temp$LD_A1 != temp$effect_allele)
     temp <- temp %>% filter(LD_A1 == effect_allele)
     warning(paste0("Inconsistent alleles when matching to LD matrix. Excluding ", as.character(n_excl), " variants from the analysis."))
   }
-  
+
   return(temp %>% select(-c(temp_other_allele, temp_effect_allele)))
-  }
+}
 
 
+################################################################################
+# Fine-mapping and wrapper
+################################################################################
 
 
 #' Perform fine mapping with SuSiE on one dataset
@@ -667,7 +471,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   harm_data <- exp_data
   # Import LD_matrix if provided as file paths, or import from 1000G if NULL
-  
+
   tic("Loading LD matrix")
   if (is.null(LD_matrix)) {
     if (is.null(bfile_loc) | is.null(plink_loc)) {
@@ -692,7 +496,7 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     }
   }
   toc()
-  
+
   # Check if allele information is present in the LD matrix and align if necessary
   tic("Flipping alleles to match LD_mat")
   if (!(all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 2])) &
@@ -714,8 +518,10 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
     )
     temp <- merge(harm_data, LD_alignment) %>%
-      mutate(temp_effect_allele = effect_allele,
-             temp_other_allele = other_allele)
+      mutate(
+        temp_effect_allele = effect_allele,
+        temp_other_allele = other_allele
+      )
     temp <- temp %>%
       mutate(
         flipped = effect_allele != LD_A1,
@@ -770,26 +576,30 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 
   # Check alignment between exposure data and LD matrix
   # Flags for faulty allele alignment
-  if(run_checks)
-  {tic("Running checks for SuSiE input")
-  exp_qc <- list(
-    kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
-      exp_for_coloc$LD,
-      n = N_exp
-    ),
-    alignment_check = tryCatch(expr = {
-      check_alignment(exp_for_coloc)
-    }, error = function(e) {
-      warning("Alignment could not be checked.")
-      NULL
-    })
-  )
-  print(exp_qc$alignment_check)
-  if (!is.null(exp_qc$alignment_check)){
-    if(exp_qc$alignment_check < 0.7) {
-      warning("Suspected alignment error.")}
+  if (run_checks) {
+    tic("Running checks for SuSiE input")
+    exp_qc <- list(
+      kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
+        exp_for_coloc$LD,
+        n = N_exp
+      ),
+      alignment_check = tryCatch(expr = {
+        check_alignment(exp_for_coloc)
+      }, error = function(e) {
+        warning("Alignment could not be checked.")
+        NULL
+      })
+    )
+    print(exp_qc$alignment_check)
+    if (!is.null(exp_qc$alignment_check)) {
+      if (exp_qc$alignment_check < 0.7) {
+        warning("Suspected alignment error.")
+      }
+    }
+    toc()
+  } else {
+    exp_qc <- NULL
   }
-  toc()}else{exp_qc <- NULL}
 
   # Calculate Z-scores for SuSiE
   z <- harm_data$beta / harm_data$se
@@ -839,16 +649,173 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
 }
 
 
+region_utils <- function(region, lead_pos, lbf_directory) {
+  # Find out region of interest
+
+  lead_chr <- str_remove(str_split_fixed(region, ":", 2)[1], "chr")
+  pos_interval <- str_split_fixed(region, ":", 2)[, 2]
+  pos_low <- as.numeric(str_split(pos_interval, "-")[[1]][1])
+  pos_high <- as.numeric(str_split(pos_interval, "-")[[1]][2])
+
+  required_start <- lead_pos - 500000
+  required_end <- lead_pos + 500000
+
+  # List files in lbf_directory
+
+  lbf_file_list <- list.files(lbf_directory, full.names = FALSE)
+
+  # Extract chromosome and positions
+  coverage <- as.data.frame(
+    do.call(rbind, lapply(lbf_file_list, function(file) {
+      match <- regmatches(file, regexec("lbf_chr(\\d+)_([0-9]+)-([0-9]+)", file))
+      if (length(match[[1]]) == 4) {
+        return(data.frame(
+          chromosome = as.integer(match[[1]][2]),
+          start_position = as.integer(match[[1]][3]),
+          end_position = as.integer(match[[1]][4])
+        ))
+      } else {
+        return(NULL)
+      }
+    }))
+  )
+
+  # See if required region is covered
+  filtered_coverage <- subset(coverage, chromosome == lead_chr)
+  position_covered <- filtered_coverage[(filtered_coverage$start_position <= required_start) &
+    (filtered_coverage$end_position >= required_end), ]
+
+  return(list(
+    region = list(
+      chr = lead_chr,
+      pos_high = pos_high,
+      pos_low = pos_low
+    ),
+    is_pos_covered = nrow(position_covered) > 0,
+    existing_coverage = position_covered
+  ))
+}
+
+finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
+                            trait,
+                            plink_path = "plink",
+                            bfile_path = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
+                            temp_dir_path = "/Temp") {
+  lead_pos <- trait %>%
+    filter(pval == min(pvalue, na.rm = TRUE)) %>%
+    pull(pos) %>%
+    mean()
+  region_utils <- region_utils(unique(trait$region), lead_pos, out_lbf_dir_path)
+
+  if (region_utils$is_pos_covered) {
+    message(paste0("Region already fine-mapped. Loading the BFs from ", out_lbf_dir_path))
+    out_lbf <- readRDS(paste0(
+      out_lbf_dir_path, "/lbf_chr",
+      as.character(region_utils$existing_coverage$chromosome),
+      "_",
+      as.character(region_utils$existing_coverage$start_position),
+      "-",
+      as.character(region_utils$existing_coverage$end_position),
+      ".rds"
+    ))
+  } else {
+    message(paste0("Region not covered, fine-mapping region ", region))
+
+    ## Find out if anything passes the conventional significance threshold
+
+    if (any(out$pval < 5e-2)) {
+      ## Run the finemapping
+
+      tic("Running SuSiE")
+      out_trait_susie <- tryCatch(expr = {
+        finemap_susie(
+          exp_data = out,
+          N_exp = N_out,
+          exp_type = out_type,
+          exp_sd = out_sd,
+          LD_matrix = NULL,
+          plink_loc = plink_path,
+          bfile_loc = bfile_path,
+          temp_dir_path = temp_dir_path,
+          max_iter = 500,
+          repeat_until_convergence = FALSE,
+          run_checks = FALSE
+        )
+      }, error = function(e) {
+        warning("SuSiE did not converge, returning BF = 0")
+        NULL
+      })
+      toc()
+
+      if (!is.null(out_trait_susie)) {
+        out_lbf <- as.data.frame(t(out_trait_susie$lbf_variable)) %>%
+          setNames(paste0("lbf_variable", 1:10)) %>%
+          rownames_to_column("SNP") %>%
+          left_join(out %>%
+            transmute(variant = paste0("chr", chr, "_", pos), SNP), by = "SNP")
+      } else {
+        out_lbf <- as.data.frame(matrix(-5, nrow = nrow(out), ncol = 10)) %>%
+          setNames(paste0("lbf_variable", 1:10)) %>%
+          mutate(
+            variant = paste0("chr", out$chr, "_", out$pos),
+            SNP = out$SNP
+          )
+      }
+
+      saveRDS(out_lbf, file = paste0(lbf_directory, "/lbf_chr", lead_chr, "_", pos_interval, ".rds"))
+    } else {
+      message("No variant crosses the significance threshold. Returning BF = 0")
+
+      out_lbf <- as.data.frame(matrix(-5, nrow = nrow(out), ncol = 10)) %>%
+        setNames(paste0("lbf_variable", 1:10)) %>%
+        mutate(
+          variant = paste0("chr", out$chr, "_", out$pos),
+          SNP = out$SNP
+        )
+    }
+  }
+  return(merge(out, out_lbf))
+}
+
+
+
+################################################################################
+# Coloc wrapper
+################################################################################
+
+
+coloc.wrapper <- function(trait1, trait2) {
+  trait1_mat <- as.matrix(dplyr::select(trait1, starts_with("lbf_variable")))
+  row.names(trait1_mat) <- trait1$variant
+  trait1_mat <- t(trait1_mat)
+
+  trait2_mat <- as.matrix(dplyr::select(trait2, starts_with("lbf_variable")))
+  row.names(trait2_mat) <- trait2$variant
+  trait2_mat <- t(trait2_mat)
+
+  res <- coloc::coloc.bf_bf(trait1_mat, trait2_mat)$summary
+
+  res$idx1 <- res$idx1 - 1
+  res$idx2 <- res$idx2 - 1
+
+  return(res)
+}
+
+
+################################################################################
+# Plot functions
+################################################################################
+
+
 #' zz_plot Function
 #'
 #' This function generates a Z-Z scatter plot for two traits (exposure and outcome), where SNPs (Single Nucleotide Polymorphisms)
 #' are color-coded based on their linkage disequilibrium (LD) with a lead SNP. Additionally, the coloc SNP (a key SNP for colocalization analysis) is highlighted.
 #'
 #' @param LD_Mat Dataframe containing the linkage disequilibrium (LD) matrix with SNPs as row names.
-#' @param lead_SNP Character string indicating the lead SNP to be labeled. **Default is `NULL` until I figure out what it was for.**
-#' @param exp_z
-#' @param out_z
-#' @param coloc_SNP Character string specifying the coloc SNP (key SNP to highlight in the plot).
+#' @param lead_SNP Character string indicating the lead SNP to be labeled.
+#' @param Harm_dat Dataframe containing harmonized data for SNPs, including beta and standard errors for exposure and outcome.
+#' @param coloc_SNP Character string specifying the coloc SNP. Default is `NULL`
 #' @param exposure_name Character string for the name of the exposure trait (default: unique value from Harm_dat's "exposure" column).
 #' @param outcome_name Character string for the name of the outcome trait (default: unique value from Harm_dat's "outcome" column).
 #'
@@ -865,50 +832,50 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP = NULL,
                     outcome_name = "outcome") {
   ## Step 1: Prepare LD Data
   # Add a column 'RS_number' to the LD matrix that stores SNP identifiers
-  colnames(LD_Mat) <- str_split_fixed(colnames(LD_Mat), "_", 3)[,1]
-  LD_Mat$RS_number <- str_split_fixed(rownames(LD_Mat), "_", 3)[,1]
-  
+  colnames(LD_Mat) <- str_split_fixed(colnames(LD_Mat), "_", 3)[, 1]
+  LD_Mat$RS_number <- str_split_fixed(rownames(LD_Mat), "_", 3)[, 1]
+
   # Subset the LD matrix to retain only the lead_SNP column for plotting
   LD_TEMP <- LD_Mat[, c("RS_number", lead_SNP)]
-  
+
   ## Step 2: Merge LD information with harmonized data
   # Merge the harmonized data (Harm_dat) with the LD data, matching SNP identifiers
-  temp_dat_format <- merge(Harm_dat, LD_TEMP, by.x = "SNP", by.y = "RS_number", all.x = TRUE)
-  
+  temp_dat_format <- as.data.frame(merge(Harm_dat, LD_TEMP, by.x = "SNP", by.y = "RS_number", all.x = TRUE))
+
   # Square the LD values to calculate r^2 for the coloc SNP
   temp_dat_format[, lead_SNP] <- temp_dat_format[, lead_SNP]^2
-  
+
   ## Step 3: Handle missing LD values and define LD color categories
   # Replace NA LD values with 0 for consistency
   temp_dat_format[, lead_SNP] <- ifelse(is.na(temp_dat_format[, lead_SNP]), 0, temp_dat_format[, lead_SNP])
-  
+
   # Create a new 'LD' column categorising LD strength into bins
-  temp_dat_format$LD <- dplyr::case_when(
-    temp_dat_format[, lead_SNP] > 0 & temp_dat_format[, lead_SNP] <= 0.2 ~ "LD < 0.2",
-    temp_dat_format[, lead_SNP] > 0.2 & temp_dat_format[, lead_SNP] <= 0.4 ~ "0.2 < LD < 0.4",
-    temp_dat_format[, lead_SNP] > 0.4 & temp_dat_format[, lead_SNP] <= 0.6 ~ "0.4 < LD < 0.6",
-    temp_dat_format[, lead_SNP] > 0.6 & temp_dat_format[, lead_SNP] <= 0.8 ~ "0.6 < LD < 0.8",
-    temp_dat_format[, lead_SNP] > 0.8 ~ "LD > 0.8",
-    TRUE ~ "No LD" # Default case when none of the above conditions are met
-  )
-  
-  
-  # Replace any remaining NA values in the 'LD' column with "No LD"
-  temp_dat_format$LD <- ifelse(is.na(temp_dat_format$LD), "No LD", temp_dat_format$LD)
-  
+  temp_dat_format <- temp_dat_format %>%
+    mutate(
+      !!sym(lead_SNP) := replace_na(!!sym(lead_SNP), 0),
+      LD = case_when(
+        !!sym(lead_SNP) >= 0 & !!sym(lead_SNP) <= 0.2 ~ "LD < 0.2",
+        !!sym(lead_SNP) > 0.2 & !!sym(lead_SNP) <= 0.4 ~ "0.2 < LD < 0.4",
+        !!sym(lead_SNP) > 0.4 & !!sym(lead_SNP) <= 0.6 ~ "0.4 < LD < 0.6",
+        !!sym(lead_SNP) > 0.6 & !!sym(lead_SNP) <= 0.8 ~ "0.6 < LD < 0.8",
+        !!sym(lead_SNP) > 0.8 ~ "LD > 0.8",
+        TRUE ~ "No LD"
+      )
+    )
+
   # Assign the "Lead SNP" label to the coloc SNP
   temp_dat_format$LD <- ifelse(temp_dat_format$SNP == lead_SNP, "Lead SNP", temp_dat_format$LD)
-  
+
   # Create a flag to highlight the coloc SNP
   temp_dat_format <- temp_dat_format %>% mutate(coloc_flag = case_when(SNP == lead_SNP ~ "Yes", TRUE ~ "No"))
-  
+
   ## Step 4: Calculate Z-scores for exposure and outcome
   # Compute Z-scores: beta divided by the standard error
-  
+
   ## Step 5: Generate the Z-Z plot
   # Use jitter to slightly shift points for better visualization
   pos <- position_jitter(width = 0.5, seed = 1)
-  
+
   # Plot the Z-scores with SNPs color-coded by LD category
   plot <- temp_dat_format %>%
     mutate(LD = fct_reorder(LD, get(lead_SNP))) %>% # Reorder LD levels for better display
@@ -936,119 +903,188 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP = NULL,
     scale_color_manual(values = c(
       "No LD" = "#D3D3D3",
       "LD < 0.2" = "#225EA8",
-      "0.2 > LD < 0.4" = "#41B6C4",
-      "0.4 > LD < 0.6" = "#7FCDBB",
-      "0.6 > LD < 0.8" = "#FE9929",
+      "0.2 < LD < 0.4" = "#41B6C4",
+      "0.4 < LD < 0.6" = "#7FCDBB",
+      "0.6 < LD < 0.8" = "#FE9929",
       "LD > 0.8" = "#8856A7",
       "Lead SNP" = "#F768A1"
     ))
-  
+
   ## Step 6: Return the final plot
   return(plot)
 }
 
 
-main_coloc_bf_susie <- function(trait_lbf, sumstats, out_lbf_dir, path_to_out){
-  
-  #### Find region to finemap and whether it is covered
-  
-  lead_pos <- trait_lbf %>%
-    filter(pvalue == min(pvalue, na.rm = TRUE)) %>%
-    pull(position) %>%
+#' Generate Locus Plots for GWAS Summary Statistics
+#'
+#' @param LD_Mat A linkage disequilibrium (LD) matrix containing SNP information.
+#' @param harm_dat A data frame containing harmonized GWAS summary statistics.
+#' @param coloc_SNP The lead SNP used for colocalization analysis.
+#'
+#' @return A list of three ggplot objects:
+#'         - `pvalues_at_locus`: Scatter plot comparing exposure and outcome -log10 p-values.
+#'         - `outcome_at_locus`: Manhattan plot for the outcome GWAS at the locus.
+#'         - `exposure_at_locus`: Manhattan plot for the exposure GWAS at the locus.
+#'
+#' @author K. Smith-Byrne, M. Breeur
+#'
+#' @export
+locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL) {
+  # Compute -log10(p-value) for exposure and outcome
+  harm_dat$log10p.exp <- -pchisq((harm_dat$beta.x / harm_dat$se.x)^2, df = 1, lower.tail = FALSE, log.p = TRUE) / log(10)
+  harm_dat$log10p.out <- -pchisq((harm_dat$beta.y / harm_dat$se.y)^2, df = 1, lower.tail = FALSE, log.p = TRUE) / log(10)
+
+  # Extract the lead SNP column for plotting
+  colnames(LD_Mat) <- str_split_fixed(colnames(LD_Mat), "_", 3)[, 1]
+  LD_Mat$RS_number <- str_split_fixed(rownames(LD_Mat), "_", 3)[, 1]
+  LD_TEMP <- LD_Mat[, c("RS_number", lead_SNP)]
+  harm_dat <- merge(harm_dat, LD_TEMP, by.x = "SNP", by.y = "RS_number", all.x = TRUE)
+  harm_dat[, lead_SNP] <- harm_dat[, lead_SNP]^2 # Square the LD values
+
+  # Assign LD category labels
+  harm_dat <- harm_dat %>%
+    mutate(
+      !!lead_SNP := replace_na(!!sym(lead_SNP), 0),
+      LD = case_when(
+        !!sym(lead_SNP) > 0 & !!sym(lead_SNP) <= 0.2 ~ "LD < 0.2",
+        !!sym(lead_SNP) > 0.2 & !!sym(lead_SNP) <= 0.4 ~ "0.2 < LD < 0.4",
+        !!sym(lead_SNP) > 0.4 & !!sym(lead_SNP) <= 0.6 ~ "0.4 < LD < 0.6",
+        !!sym(lead_SNP) > 0.6 & !!sym(lead_SNP) <= 0.8 ~ "0.6 < LD < 0.8",
+        !!sym(lead_SNP) > 0.8 ~ "LD > 0.8",
+        TRUE ~ "No LD"
+      )
+    )
+
+
+  # Mark lead SNP in LD category
+  harm_dat$LD <- ifelse(harm_dat$SNP == lead_SNP, "Lead SNP", harm_dat$LD)
+  harm_dat <- harm_dat %>% mutate(lead_flag = case_when(SNP == lead_SNP ~ "Yes", TRUE ~ "No"))
+
+  # Define factor levels for LD categories
+  harm_dat$LD <- factor(harm_dat$LD, levels = c("No LD", "LD < 0.2", "0.2 < LD < 0.4", "0.4 < LD < 0.6", "0.6 < LD < 0.8", "LD > 0.8", "Lead SNP"))
+
+  # Define LD color mapping
+  ld_colors <- c(
+    "No LD" = "#D3D3D3", "LD < 0.2" = "#225EA8", "0.2 < LD < 0.4" = "#41B6C4",
+    "0.4 < LD < 0.6" = "#7FCDBB", "0.6 < LD < 0.8" = "#FE9929", "LD > 0.8" = "#8856A7", "Lead SNP" = "#F768A1"
+  )
+
+  # Generate scatter plot for p-values
+  p_p_plot <- ggplot(harm_dat, aes(x = log10p.exp, y = log10p.out, color = LD)) +
+    geom_point(size = 2) +
+    scale_x_continuous(limits = c(0, max(harm_dat$log10p.exp) * 1.05)) +
+    labs(
+      x = bquote(.(unique(harm_dat$exposure)) ~ "GWAS" ~ ~ -log[10]("p-value")),
+      y = bquote(.(unique(harm_dat$outcome)) ~ "GWAS" ~ ~ -log[10]("p-value")),
+      color = "LD with Lead SNP"
+    ) +
+    theme_minimal() +
+    scale_color_manual(values = ld_colors) +
+    geom_label_repel(data = harm_dat %>% filter(SNP %in% c(lead_SNP, coloc_SNP)), aes(label = SNP), size = 6, show.legend = FALSE)
+
+  # Generate Manhattan plots for exposure and outcome
+  locus_plot_generator <- function(y_var, title_prefix) {
+    ggplot(harm_dat, aes(x = pos.x, y = !!sym(y_var), color = LD)) +
+      geom_point(size = 2) +
+      labs(x = "BP Position", y = bquote(.(unique(harm_dat[[y_var]])) ~ "GWAS" ~ ~ -log[10]("p-value")), color = "LD with Lead SNP") +
+      theme_minimal() +
+      ggtitle(paste0(title_prefix, unique(harm_dat[[y_var]]))) +
+      scale_color_manual(values = ld_colors) +
+      geom_label_repel(data = harm_dat %>% filter(SNP %in% c(lead_SNP, coloc_SNP)), aes(label = SNP), size = 6, show.legend = FALSE)
+  }
+
+  locus_out <- locus_plot_generator("log10p.out", "Locus Manhattan plot for ")
+  locus_exp <- locus_plot_generator("log10p.exp", "Locus Manhattan plot for ")
+
+  # Return a list of plots
+  return(list(pvalues_at_locus = p_p_plot, outcome_at_locus = locus_out, exposure_at_locus = locus_exp))
+}
+
+
+
+plot.wrapper <- function(trait, out, res_coloc,
+                         plink_path = "plink",
+                         bfile_path = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
+                         temp_dir_path = "/Temp") {
+  # Define plot window
+  lead_pos <- trait %>%
+    filter(pval == min(pvalue, na.rm = TRUE)) %>%
+    pull(pos) %>%
     mean()
-  
+
   required_start <- lead_pos - 500000
   required_end <- lead_pos + 500000
-  
-  ## Find out which regions are already covered
-  
-  # Set the directory containing the files and list them
-  lbf_file_list <- list.files(out_lbf_dir, full.names = FALSE)
-  # Extract chromosome and positions
-  coverage <- as.data.frame(
-    do.call(rbind, lapply(lbf_file_list, function(file) {
-      match <- regmatches(file, regexec("lbf_chr(\\d+)_([0-9]+)-([0-9]+)", file))
-      if (length(match[[1]]) == 4) {
-        return(data.frame(
-          chromosome = as.integer(match[[1]][2]),
-          start_position = as.integer(match[[1]][3]),
-          end_position = as.integer(match[[1]][4])
-        ))
-      } else {
-        return(NULL)
-      }
-    }))
+
+  # Extract LD matrix
+  SNP_list <- trait$SNP[between(trait$pos, required_start, required_end)]
+
+  LD_matrix <- get_ld_matrix_from_bim(SNP_list,
+    plink_loc = plink_loc,
+    bfile_loc = bfile_loc,
+    with_alleles = T,
+    temp_dir_path = temp_dir_path
   )
-  # Check if required region is covered
-  filtered_coverage <- subset(coverage, chromosome == lead_chr)
-  position_covered <- filtered_coverage[(filtered_coverage$start_position <= required_start) & 
-                                          (filtered_coverage$end_position >= required_end),]
-  
-  
-  #### Run fine-mapping with susie only if required
-  
-  if (nrow(position_covered)>0) {
-    ## The region was already covered, load the corresponding BF
-    
-    out_lbf <- readRDS(paste0(lbf_directory,"/lbf_chr",
-                              as.character(position_covered$chromosome),
-                              "_",
-                              as.character(position_covered$start_position),
-                              "-",
-                              as.character(position_covered$end_position),
-                              ".rds"))
+
+  ## Extract lead snp from trait
+
+  lead_snp <- unique(trait$SNP[which.min(abs(trait$pos - lead_pos))])
+
+  ## Flip z scores if needed, according to LD_mat
+
+  harm_dat <- merge(
+    align_to_LD(trait, LD_matrix),
+    align_to_LD(out, LD_matrix)
+  )
+
+  ## Make locus and zz plots, store them in list
+
+  # Highlight coloc_snp if colocalised
+  colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
+  if (colocalised) {
+    # coloc_snp = whatever
   } else {
-    ## The region was not covered, run SuSiE on the whole 2e6 region
-    
-    out_raw <- fread(path_to_out)
-    # plot_can <- manhattan(out_raw %>% filter(p_value < 1e-5), chr = "chromosome", bp = "base_pair_location", snp = "rsid", p = "p_value")
-    
-    # can_lead_var <- out_raw[which.min(out_raw$p_value), variant_id]
-    # # [1] "11_69422827_C_T"
-    # 
-    
-    out_trait_region <- out_raw %>%
-      filter(chromosome == lead_chr) %>%
-      filter(between(base_pair_location, pos_low, pos_high))
-    
-    
-    out_trait_region <- TwoSampleMR::format_data(data.frame(out_trait_region),
-                                                 chr_col = "chromosome",
-                                                 pos_col = "base_pair_location",
-                                                 snp_col = "rsid",
-                                                 beta_col = "beta",
-                                                 se_col = "standard_error",
-                                                 pval_col = "p_value",
-                                                 log_pval = FALSE,
-                                                 eaf_col = "effect_allele_frequency",
-                                                 effect_allele_col = "effect_allele",
-                                                 other_allele_col = "other_allele"
-    )
-    
-    ## Run the finemapping
-    
-    tic("Running SuSiE")
-    out_trait_susie <- finemap_susie(
-      exp_data = out_trait_region,
-      N_exp = 780000,
-      exp_type = "cc",
-      exp_sd = 0.034,
-      LD_matrix = NULL,
-      plink_loc = "plink",
-      bfile_loc = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
-      max_iter = 1000,
-      repeat_until_convergence = TRUE
-    )
-    toc()
-    
-    out_lbf <- as.data.frame(t(out_trait_susie$susie.res$lbf_variable)) %>%
-      setNames(c(paste0("lbf_variable", 1:10), "SNP")) %>%
-      rownames_to_column("SNP") %>%
-      left_join(out_trait_region %>%
-                  transmute(variant = paste0("chr", chr.exposure, "_", pos.exposure), SNP), by = "SNP")
-    
-    saveRDS(out_lbf, file = paste0(lbf_directory, "/lbf_chr", lead_chr, "_", pos_interval, ".rds"))
+    coloc_snp <- NULL
   }
-  
-  return(out_bf)
+
+  plot_list <- locus_plot(as.data.frame(LD_matrix),
+    as.data.frame(harm_dat),
+    lead_SNP = lead_snp,
+    coloc_SNP = coloc_snp
+  )
+
+  plot_list$zzplot <- zz_plot(
+    LD_Mat = as.data.frame(LD_matrix),
+    lead_SNP = lead_snp,
+    coloc_SNP = coloc_snp,
+    Harm_dat = harm_dat
+  )
+
+  return(plot_list)
+}
+
+
+
+################################################################################
+# MR wrapper
+################################################################################
+
+mr.wrapper <- function(trait, out, N_out, res_coloc) {
+  colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
+  if (colocalised) {
+    trait_mr <- TwoSampleMR::format_data(as.data.frame(trait)) %>%
+      filter(pval.exposure < 1e-5)
+    out_mr <- TwoSampleMR::format_data(as.data.frame(out),
+      snps = trait_mr$SNP,
+      type = "outcome"
+    )
+    out_mr$samplesize.outcome <- N_out
+
+    harm_dat_mr <- TwoSampleMR::harmonise_data(trait_mr, out_mr)
+
+    res_mr_single <- mr_singlesnp(harm_dat_mr, all_method = c())
+  } else {
+    res_mr_single <- NULL
+  }
+
+  return(res_mr_single)
 }
