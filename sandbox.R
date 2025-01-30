@@ -47,18 +47,12 @@ temp_dir_path <- "Temp"
 path_lbf      <- "data/eQTL_catalogue/QTD000261.lbf_variable.txt.gz"
 path_sumstats <- "data/eQTL_catalogue/QTD000261.cc.tsv.gz"
 
-# kid_genexp_lbf <- fread(path_lbf)
-# traits <- names(table(kid_genexp_lbf$molecular_trait_id))
-# length(traits)
+kid_genexp_lbf <- fread(path_lbf)
+traits <- names(table(kid_genexp_lbf$molecular_trait_id))
+length(traits)
 # 424 genes whose expression has been quantified here.
 
-## Pick a trait
-
-# trait <- "ENSG00000250508"
-trait_id <- "ENSG00000184227" # chr 14 ACOT1 https://platform.opentargets.org/target/ENSG00000184227
-# trait <- "ENSG00000258289"
-# trait <- "ENSG00000006282"
-
+trait_id <- "ENSG00000184227"
 trait <- format_eqtl_cat_trait(trait_id, path_lbf, path_sumstats)
 
 

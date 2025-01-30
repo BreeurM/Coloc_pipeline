@@ -689,7 +689,7 @@ region_utils <- function(region, lead_pos, lbf_directory) {
     region = list(
       chr = lead_chr,
       pos_high = pos_high,
-      pos_low = pos_low
+      pos_low = max(pos_low, 0)
     ),
     is_pos_covered = nrow(position_covered) > 0,
     existing_coverage = position_covered
@@ -737,7 +737,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
           plink_loc = plink_path,
           bfile_loc = bfile_path,
           temp_dir_path = temp_dir_path,
-          max_iter = 500,
+          max_iter = 1000,
           repeat_until_convergence = FALSE,
           run_checks = FALSE
         )
@@ -1005,7 +1005,7 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL) {
 plot.wrapper <- function(trait, out, res_coloc,
                          plink_path = "plink",
                          bfile_path = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
-                         temp_dir_path = "/Temp") {
+                         temp_dir_path = "Temp") {
   # Define plot window
   lead_pos <- trait %>%
     filter(pval == min(pvalue, na.rm = TRUE)) %>%
@@ -1019,8 +1019,8 @@ plot.wrapper <- function(trait, out, res_coloc,
   SNP_list <- trait$SNP[between(trait$pos, required_start, required_end)]
 
   LD_matrix <- get_ld_matrix_from_bim(SNP_list,
-    plink_loc = plink_loc,
-    bfile_loc = bfile_loc,
+    plink_loc = plink_path,
+    bfile_loc = bfile_path,
     with_alleles = T,
     temp_dir_path = temp_dir_path
   )
