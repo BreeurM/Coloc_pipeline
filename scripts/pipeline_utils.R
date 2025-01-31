@@ -654,8 +654,13 @@ region_utils <- function(region, lead_pos, lbf_directory) {
 
   lead_chr <- str_remove(str_split_fixed(region, ":", 2)[1], "chr")
   pos_interval <- str_split_fixed(region, ":", 2)[, 2]
-  pos_low <- as.numeric(str_split(pos_interval, "-")[[1]][1])
-  pos_high <- as.numeric(str_split(pos_interval, "-")[[1]][2])
+  if (length(str_split(pos_interval, "-")[[1]]) == 2)
+  {pos_low <- as.numeric(str_split(pos_interval, "-")[[1]][1])
+  pos_high <- as.numeric(str_split(pos_interval, "-")[[1]][2])} else {
+    # First entry negative
+    pos_low <- -as.numeric(str_split(pos_interval, "-")[[1]][2])
+    pos_high <- as.numeric(str_split(pos_interval, "-")[[1]][3])
+  }
 
   required_start <- lead_pos - 500000
   required_end <- lead_pos + 500000
@@ -689,7 +694,7 @@ region_utils <- function(region, lead_pos, lbf_directory) {
     region = list(
       chr = lead_chr,
       pos_high = pos_high,
-      pos_low = max(pos_low, 0)
+      pos_low = pos_low
     ),
     is_pos_covered = nrow(position_covered) > 0,
     existing_coverage = position_covered
@@ -700,15 +705,18 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
                             trait,
                             plink_path = "plink",
                             bfile_path = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
-                            temp_dir_path = "/Temp") {
+                            temp_dir_path = "Temp") {
   lead_pos <- trait %>%
     filter(pval == min(pvalue, na.rm = TRUE)) %>%
     pull(pos) %>%
     mean()
   region_utils <- region_utils(unique(trait$region), lead_pos, out_lbf_dir_path)
 
+  print(unique(trait$region))
+  
   if (region_utils$is_pos_covered) {
     message(paste0("Region already fine-mapped. Loading the BFs from ", out_lbf_dir_path))
+    out_trait_susie = NULL
     out_lbf <- readRDS(paste0(
       out_lbf_dir_path, "/lbf_chr",
       as.character(region_utils$existing_coverage$chromosome),
@@ -719,7 +727,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
       ".rds"
     ))
   } else {
-    message(paste0("Region not covered, fine-mapping region ", region))
+    message(paste0("Region not covered, fine-mapping region ", unique(trait$region)))
 
     ## Find out if anything passes the conventional significance threshold
 
@@ -737,7 +745,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
           plink_loc = plink_path,
           bfile_loc = bfile_path,
           temp_dir_path = temp_dir_path,
-          max_iter = 1000,
+          max_iter = 10000,
           repeat_until_convergence = FALSE,
           run_checks = FALSE
         )
@@ -762,9 +770,13 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
           )
       }
 
-      saveRDS(out_lbf, file = paste0(lbf_directory, "/lbf_chr", lead_chr, "_", pos_interval, ".rds"))
+      saveRDS(out_lbf, file = paste0(out_lbf_dir_path, "/lbf_chr", 
+                                     region_utils$region$chr, "_",
+                                     as.character(region_utils$region$pos_low), "-",
+                                     as.character(region_utils$region$pos_high), ".rds"))
     } else {
       message("No variant crosses the significance threshold. Returning BF = 0")
+      out_trait_susie = NULL
 
       out_lbf <- as.data.frame(matrix(-5, nrow = nrow(out), ncol = 10)) %>%
         setNames(paste0("lbf_variable", 1:10)) %>%
@@ -774,7 +786,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
         )
     }
   }
-  return(merge(out, out_lbf))
+  #return(merge(out, out_lbf))
 }
 
 

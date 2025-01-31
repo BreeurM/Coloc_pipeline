@@ -52,7 +52,7 @@ traits <- names(table(kid_genexp_lbf$molecular_trait_id))
 length(traits)
 # 424 genes whose expression has been quantified here.
 
-trait_id <- "ENSG00000184227"
+trait_id <- "ENSG00000035115"
 trait <- format_eqtl_cat_trait(trait_id, path_lbf, path_sumstats)
 
 

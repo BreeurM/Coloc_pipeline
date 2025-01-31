@@ -21,7 +21,7 @@ source("~/Code/Coloc_pipeline/scripts/pipeline_utils.R")
 
 # Trait paths
 
-trait_id            <- "ENSG00000184227" 
+trait_id            <- "ENSG00000035115"
 trait_lbf_path      <- "data/eQTL_catalogue/QTD000261.lbf_variable.txt.gz"
 trait_sumstats_path <- "data/eQTL_catalogue/QTD000261.cc.tsv.gz"
 
