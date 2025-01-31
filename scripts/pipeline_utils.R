@@ -200,7 +200,7 @@ format_data <- function(dat, header = TRUE, snp_col = "SNP",
 
   dat <- dat %>% mutate(
     variant = paste0("chr", chr, "_", pos),
-    R = w^2 / (w^2 + se^2), # Calculate R-score
+    R = w^2 / (w^2 + se^2), # Calculate R-score MIGHT NOT BE CORRECT
     lbf_variable0 = 0.5 * (log(1 - R) + (R * z^2)) # Calculate log Bayes factor
   )
 
