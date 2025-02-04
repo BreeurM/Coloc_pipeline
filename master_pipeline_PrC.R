@@ -48,6 +48,7 @@ exp_sd              <- 1
 
 # Outcome paths and parameters
 
+out_id              <- "Prostate cancer"
 out_sumstats_path   <- "data/PrC_coloc/ELLIPSE_V2_META_EUROPEAN_Results_012121.txt"
 out_lbf_dir_path    <- "data/PrC_coloc/prostate_cancer_lbf"
 N_out               <- 178000
@@ -139,7 +140,7 @@ res_coloc <- coloc.wrapper(trait, out)
 ################################################################################
 
 
-plots <- plot.wrapper(trait, out, res_coloc, trait_id, "Prostate cancer")
+plots <- plot.wrapper(trait, out, res_coloc, trait_id, out_id)
 
 
 ################################################################################
@@ -147,7 +148,7 @@ plots <- plot.wrapper(trait, out, res_coloc, trait_id, "Prostate cancer")
 ################################################################################
 
 
-res_mr <- mr.wrapper(trait, out, N_out, res_coloc)
+res_mr <- mr.wrapper(trait, out, N_out, res_coloc, trait_id, out_id)
 
 
 
