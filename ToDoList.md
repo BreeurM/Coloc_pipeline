@@ -19,6 +19,9 @@ finemap_wrapper
   
 coloc_wrapper
   - output is obscure. Rename hits and add snps id
+  
+plot_wrapper
+  - put plots in the same pdf
 	
 master_pipeline:
   - Figure out how to get the sample size (for now only one outcome of interest, can be set externally)
