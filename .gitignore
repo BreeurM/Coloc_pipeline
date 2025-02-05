@@ -5,3 +5,5 @@ data/hg19ToHg38.over.chain
 .Rhistory
 .RData
 plink.exe
+.Rproj.user
+renv/library/
