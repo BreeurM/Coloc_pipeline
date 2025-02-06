@@ -10,9 +10,9 @@ library(ggpubr)
 library(readr)
 library(qqman)
 library(tictoc)
-library(GenomicRanges)
-library(rtracklayer)
-library(IRanges)
+# library(GenomicRanges)
+# library(rtracklayer)
+# library(IRanges)
 library(liftOver)
 library(data.table)
 library(tidyverse)
@@ -41,7 +41,7 @@ source("~/Code/Coloc_pipeline/scripts/pipeline_utils.R")
 # Trait paths
 
 trait_id            <- "MSMB"
-trait_lbf_path      <- "data/PrC_coloc/MSMB/"
+trait_lbf_path      <- "data/PrC_coloc/MSMB"
 trait_sumstats_path <- "data/PrC_coloc/MSMB/MSMB_P08118_OID20275_rs10993994.rsids.csv"
 N_exp               <- 35000
 exp_type            <- "quant"
@@ -49,7 +49,7 @@ exp_sd              <- 1
 
 # Outcome paths and parameters
 
-out_id              <- "Prostate cancer"
+out_id              <- "Prostate_cancer"
 out_sumstats_path   <- "data/PrC_coloc/ELLIPSE_V2_META_EUROPEAN_Results_012121.txt"
 out_lbf_dir_path    <- "data/PrC_coloc/prostate_cancer_lbf"
 N_out               <- 178000
@@ -63,7 +63,11 @@ out_sd              <- 0.48
 # bfile_path          <- "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered"
 # temp_dir_path       <- "Temp"
 # They can be changed when calling the .wrappers functions
-chain_path <- "data/hg19ToHg38.over.chain"
+chain_path  <- "data/hg19ToHg38.over.chain"
+rsid38_path <- "data/hg38_rsid_map_file.txt"
+
+# Where to store the results
+respath <- "results"
 
 ################################################################################
 # Extract LBF for kidney study
@@ -102,7 +106,7 @@ out_raw <- out_raw %>%
   filter((Chromosome == unique(trait$chr)))%>% 
   mutate(chr = Chromosome, pos = Position, SNP = SNP_Id)
 
-build <- get_genome_build(out_raw, sampled_snps = 100)
+build <- get_genome_build_local(out_raw, sampled_snps = 100, path_to_38 = rsid38_path)
 if (build == "GRCH37") {
   out_raw <- lift_coordinates(out_raw, chain_path)
 }
@@ -133,7 +137,7 @@ out <- finemap.wrapper(out, out_lbf_dir_path, N_out, out_type, out_sd, trait)
 ################################################################################
 
 
-res_coloc <- coloc.wrapper(trait, out)
+res_coloc <- coloc.wrapper(trait, out, trait_id, out_id)
 
 
 ################################################################################
@@ -152,7 +156,18 @@ plots <- plot.wrapper(trait, out, res_coloc, trait_id, out_id)
 res_mr <- mr.wrapper(trait, out, N_out, res_coloc, trait_id, out_id)
 
 
+################################################################################
+# Store the results
+################################################################################
 
 
+res <- list(coloc = res_coloc,
+            mr = res_mr,
+            plots = plots)
+
+resfile <- paste0(respath, "/fullres_", 
+                  str_replace(trait_id, " ", "_"), "_", 
+                  str_replace(out_id, " ", "_"), ".rds")
+saveRDS(res, resfile)
 
 

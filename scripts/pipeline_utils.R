@@ -240,15 +240,6 @@ format_data <- function(dat, header = TRUE, snp_col = "SNP",
 #' @author M.Breeur, adapted from https://rdrr.io/github/neurogenomics/MungeSumstats/src/R/get_genome_build.R
 get_genome_build <- function(data, sampled_snps = 500, dbSNP = 155) {
   seqnames <- chr <- SNP <- pos <- NULL
-  # Infer genome build using SNP & CHR & BP
-  if (!all(c("SNP", "chr", "pos") %in% colnames(data))) {
-    # want it returned rather than throwing an error
-    if (isTRUE(allele_match_ref)) {
-      return(err_msg)
-    } else {
-      stop(err_msg)
-    }
-  }
 
   # Do some filtering first to avoid errors
   data <- data[complete.cases(SNP, chr, pos)]
@@ -329,6 +320,59 @@ get_genome_build <- function(data, sampled_snps = 500, dbSNP = 155) {
   return(ref_genome)
 }
 
+
+
+get_genome_build_local <- function(data, sampled_snps = 500, path_to_38) {
+  
+  # Do some filtering first to avoid errors
+  data <- data[complete.cases(SNP, chr, pos)]
+  # also remove common incorrect formatting of SNP
+  data <- data[grepl("^rs", SNP), ]
+  data <- data[SNP != ".", ]
+  # also deal with common misformatting of CHR
+  # if chromosome col has chr prefix remove it
+  data[, chr := gsub("chr", "", chr)]
+  
+  # if removing erroneous cases leads to <min(10k,50% org dataset) will fail -
+  # NOT ENOUGH DATA TO INFER
+  nrow_clean <- nrow(data)
+  
+  # Downsample SNPs to save time
+  if ((nrow(data) > sampled_snps) && !(is.null(sampled_snps))) {
+    snps <- sample(data$SNP, sampled_snps)
+  } else { # nrow(data)<10k
+    snps <- data$SNP
+  }
+  
+  data <- data[SNP %in% snps, ]
+  
+  ref38 <- fread(path_to_38)
+  # convert CHR filed in data to character if not already
+  ref38[, chr := as.character(chr)]
+  data[, chr := as.character(chr)]
+  # Now check which genome build has more matches to data
+  num_38 <- nrow(ref38[data, ,on = c("SNP" = "SNP", "pos" = "pos", "chr" = "chr"), nomatch = FALSE])/sampled_snps
+  
+  if (num_38 > .5) {
+    ref_gen_num <- num_37
+    ref_genome <- "GRCH38"
+  } else {
+    ref_gen_num <- num_38
+    ref_genome <- "GRCH37"
+  }
+  
+  message("Inferred genome build: ", ref_genome)
+  # add a warning if low proportion of matches found
+  # msg <- paste0(
+  #   "WARNING: Less than 10% of your sampled SNPs matched that of ",
+  #   "either reference genome, this may question the quality of ",
+  #   "your summary statistics file."
+  # )
+  # if (ref_gen_num / length(snps) < 0.1) {
+  #   message(msg)
+  # }
+  return(ref_genome)
+}
 
 
 lift_coordinates <- function(sumstats, chain_file) {
@@ -1001,20 +1045,36 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
 ################################################################################
 
 
-coloc.wrapper <- function(trait1, trait2) {
+coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name = "outcome") {
+  
   trait1_mat <- as.matrix(dplyr::select(trait1, starts_with("lbf_variable")))
   row.names(trait1_mat) <- trait1$variant
-  trait1_mat <- t(trait1_mat)
+  # Reorder columns if necessary
+  col_names <- colnames(trait1_mat)
+  numbers <- as.numeric(gsub("lbf_variable", "", col_names))
+  column_order <- order(numbers)
+  trait1_mat_ordered <- t(trait1_mat[, column_order])
 
   trait2_mat <- as.matrix(dplyr::select(trait2, starts_with("lbf_variable")))
   row.names(trait2_mat) <- trait2$variant
-  trait2_mat <- t(trait2_mat)
+  # Reorder columns if necessary
+  col_names <- colnames(trait2_mat)
+  numbers <- as.numeric(gsub("lbf_variable", "", col_names))
+  column_order <- order(numbers)
+  trait2_mat_ordered <- t(trait2_mat[, column_order])
 
-  res <- coloc::coloc.bf_bf(trait2_mat, trait1_mat)$summary
+  res <- coloc::coloc.bf_bf(trait2_mat_ordered, trait1_mat_ordered)$summary
   # inverting 1 and 2 because coloc_bf_bf takes entry 1 as hit2 and vice versa
 
   res$idx1 <- res$idx1 - 1
   res$idx2 <- res$idx2 - 1
+  
+  res <- res %>% mutate(method = ifelse(idx1 == 0 & idx2 == 0, "vanilla", # coloc between the two non-finemapped signals
+                        ifelse(idx1 == 0 | idx2 == 0, "hybrid", # coloc between one susie credible set and an original signal
+                               "susie")))%>% # coloc between susie credible sets
+    rename_with(~ c(paste0("hit_", str_replace(trait1_name," ","_") ), 
+                   paste0("hit_", str_replace(trait2_name," ","_"))), 
+                c(hit1, hit2))
 
   return(res)
 }
@@ -1262,9 +1322,9 @@ plot.wrapper <- function(trait, out, res_coloc, trait_name = "exposure", out_nam
   # Highlight coloc_snp if colocalised
   colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
   if (colocalised) {
-    # coloc_snp = hit in hit2
-    variant <- res_coloc$hit2[which.max(res_coloc$PP.H4.abf)]
-    coloc_snp <- out$SNP[out$variant == variant]
+    # coloc_snp = hit in hit_out_name
+    vars <- res_coloc %>% select(!!sym(paste0("hit_", str_replace(out_name," ","_"))))
+    coloc_snp <- out$SNP[out$variant == vars[which.max(res_coloc$PP.H4.abf)]]
   } else {
     coloc_snp <- NULL
   }
