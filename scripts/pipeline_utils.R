@@ -322,70 +322,109 @@ get_genome_build <- function(data, sampled_snps = 500, dbSNP = 155) {
 
 
 
+#' Infer Genome Build from Input Data by Comparing to GRCh38 Reference
+#' 
+#' This function determines whether the input data is aligned to the GRCh37 or GRCh38 genome build
+#' by comparing SNP chromosomal positions against a GRCh38 reference. It assumes GRCh37 if there's 
+#' insufficient matching with GRCh38.
+#'
+#' @param data A data.table containing GWAS summary statistics. Must include columns: SNP (rsID), chr (chromosome), pos (position).
+#' @param sampled_snps Number of SNPs to sample for comparison (default: 500). Uses all SNPs if dataset is smaller.
+#' @param path_to_38 Path to reference file for GRCh38 build (expected columns: SNP, chr, pos).
+#' 
+#' @return Character string indicating inferred genome build ("GRCH37" or "GRCH38")
+#' 
+#' @author M. Breeur
 get_genome_build_local <- function(data, sampled_snps = 500, path_to_38) {
   
-  # Do some filtering first to avoid errors
+  # Remove rows with missing values in key columns
   data <- data[complete.cases(SNP, chr, pos)]
-  # also remove common incorrect formatting of SNP
-  data <- data[grepl("^rs", SNP), ]
-  data <- data[SNP != ".", ]
-  # also deal with common misformatting of CHR
-  # if chromosome col has chr prefix remove it
+  
+  # Filter out non-rsID SNPs and placeholder values
+  data <- data[grepl("^rs", SNP), ]  # Keep only rsIDs
+  data <- data[SNP != ".", ]         # Remove missing SNP codes
+  
+  # Standardize chromosome formatting by removing 'chr' prefix
   data[, chr := gsub("chr", "", chr)]
   
-  # if removing erroneous cases leads to <min(10k,50% org dataset) will fail -
-  # NOT ENOUGH DATA TO INFER
-  nrow_clean <- nrow(data)
-  
-  # Downsample SNPs to save time
+  # Downsample if dataset exceeds sampling threshold
   if ((nrow(data) > sampled_snps) && !(is.null(sampled_snps))) {
     snps <- sample(data$SNP, sampled_snps)
-  } else { # nrow(data)<10k
+  } else {
     snps <- data$SNP
   }
-  
   data <- data[SNP %in% snps, ]
   
+  # Load GRCh38 reference data
   ref38 <- fread(path_to_38)
-  # convert CHR filed in data to character if not already
+  
+  # Ensure chromosome column type matches in both datasets
   ref38[, chr := as.character(chr)]
   data[, chr := as.character(chr)]
-  # Now check which genome build has more matches to data
-  num_38 <- nrow(ref38[data, ,on = c("SNP" = "SNP", "pos" = "pos", "chr" = "chr"), nomatch = FALSE])/sampled_snps
   
-  if (num_38 > .5) {
-    ref_gen_num <- num_37
+  # Calculate match rate with GRCh38 positions
+  num_38 <- nrow(
+    ref38[data, , on = c("SNP" = "SNP", "pos" = "pos", "chr" = "chr"), nomatch = FALSE]
+  )/sampled_snps
+  
+  # Determine genome build based on match proportion
+  if (num_38 > 0.5) {
     ref_genome <- "GRCH38"
   } else {
-    ref_gen_num <- num_38
     ref_genome <- "GRCH37"
   }
   
   message("Inferred genome build: ", ref_genome)
-  # add a warning if low proportion of matches found
-  # msg <- paste0(
-  #   "WARNING: Less than 10% of your sampled SNPs matched that of ",
-  #   "either reference genome, this may question the quality of ",
-  #   "your summary statistics file."
-  # )
-  # if (ref_gen_num / length(snps) < 0.1) {
-  #   message(msg)
+  
+  # Optional low-match warning (currently commented out)
+  # if (ref_gen_num/length(snps) < 0.1) {
+  #   message("WARNING: Less than 10% of sampled SNPs matched reference genomes")
   # }
+  
   return(ref_genome)
 }
 
 
+#' Lift genomic coordinates from hg19 to hg38 using chain file
+#' 
+#' This function converts chromosomal positions between genome builds (hg19 to hg38)
+#' using UCSC chain files. It handles chromosome formatting and merges lifted positions
+#' back with original data.
+#'
+#' @param sumstats A data.frame/data.table containing SNP coordinates. Must contain:
+#'   - SNP: SNP identifier (rsID)
+#'   - chr: Chromosome (format "chr1" or "1")
+#'   - pos: Genomic position (hg19 coordinates)
+#' @param chain_file Path to UCSC chain file for hg19-to-hg38 conversion
+#' 
+#' @return A data.frame with:
+#'   - All original columns except chr/pos
+#'   - New chr/pos columns in hg38 coordinates
+#'   - Only SNPs that successfully lifted over
+#' @note
+#' Requires GenomicRanges and rtracklayer packages. The chain file can be downloaded
+#' from UCSC: http://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/
+#' 
+#' @details
+#' Key steps:
+#' 1. Standardizes chromosome formatting
+#' 2. Creates genomic ranges object
+#' 3. Applies liftOver using provided chain file
+#' 4. Merges successful lifts with original data
+#' 5. Returns dataframe with updated coordinates
+#' 
+#' @author M. Breeur
 lift_coordinates <- function(sumstats, chain_file) {
   # Check required columns
   if (!all(c("SNP", "chr", "pos") %in% colnames(sumstats))) {
     stop("Dataframe must contain columns: SNP, chr, pos")
   }
-
+  
   # Add 'chr' prefix if missing
   if (!any(grepl("^chr", sumstats$chr[1]))) {
     sumstats$chr <- paste0("chr", sumstats$chr)
   }
-
+  
   # Create GRanges object
   gr <- GRanges(
     seqnames = sumstats$chr,
@@ -393,29 +432,29 @@ lift_coordinates <- function(sumstats, chain_file) {
     strand = "*",
     SNP = sumstats$SNP
   )
-
+  
   # Import chain file
   chain <- import.chain(chain_file)
-
+  
   # Perform liftOver
   gr38 <- liftOver(gr, chain)
   gr38 <- unlist(gr38)
-
+  
   # Convert back to dataframe
   sumstats38 <- as.data.frame(gr38)
   colnames(sumstats38) <- c("chr38", "pos38", "pos38end", "width", "strand", "SNP")
-
+  
   # Clean chromosome names
   sumstats38$chr38 <- sub("^chr", "", sumstats38$chr38)
   sumstats38 <- sumstats38[complete.cases(sumstats38$SNP), ]
-
+  
   # Merge with original data
   merged <- merge(sumstats, sumstats38[, c("SNP", "chr38", "pos38")], by = "SNP")
-
+  
   # Remove original coordinates and rename new ones
   merged <- as.data.frame(merged)[, !(names(merged) %in% c("chr", "pos"))]
   names(merged)[names(merged) %in% c("chr38", "pos38")] <- c("chr", "pos")
-
+  
   return(merged)
 }
 
@@ -459,11 +498,6 @@ format_eqtl_cat_trait <- function(trait, path_lbf, path_sumstats) {
   return(trait)
 }
 
-
-lbf_in_dataframe <- function(df) {
-  required_cols <- paste0("lbf_variable", 1:10)
-  return(any(required_cols %in% colnames(df)))
-}
 
 ################################################################################
 # LD matrices utilites
