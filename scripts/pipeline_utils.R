@@ -461,40 +461,63 @@ lift_coordinates <- function(sumstats, chain_file) {
 
 
 
+#' Format eQTL Catalogue Trait Data
+#'
+#' This function reads and formats data downloaded from the eQTL Catalogue.
+#'
+#' @param trait A character string specifying the molecular trait ID of interest.
+#' @param path_lbf The file path to the LBF data file (loaded using `fread`).
+#' @param path_sumstats The file path to the summary statistics file (loaded using `fread`).
+#'
+#' @return A formatted data frame containing eQTL summary statistics with harmonized column names and additional variables retained.
+#'
+#' @import data.table
+#' @import dplyr
+#' 
+#' @author M.Breeur
+#' @export
 format_eqtl_cat_trait <- function(trait, path_lbf, path_sumstats) {
+  # Load LBF and summary statistics data
   data_lbf <- fread(path_lbf)
   sumstats <- fread(path_sumstats)
-
+  
+  # Filter LBF data for the specified molecular trait
   trait_data <- data_lbf %>% filter(molecular_trait_id == trait)
-
+  
+  # Merge LBF data with summary statistics
   trait_data <- trait_data %>%
     left_join(
       select(
         sumstats,
-        variant,
-        rsid,
+        variant,   # Variant identifier
+        rsid,      # Reference SNP ID
         molecular_trait_id,
-        pvalue,
-        beta,
-        se,
-        ref,
-        alt,
-        maf
+        pvalue,    # P-value of association
+        beta,      # Effect size estimate
+        se,        # Standard error
+        ref,       # Reference allele
+        alt,       # Alternative allele
+        maf        # Minor allele frequency
       ),
       by = c("variant", "molecular_trait_id")
     )
-
-
-  trait <- format_data(trait_data,
-    snp_col = "rsid", eaf_col = "maf",
-    effect_allele_col = "ref", other_allele_col = "alt",
-    pval_col = "pvalue", chr_col = "chromosome",
+  
+  # Format the data for downstream analysis
+  trait <- format_data(
+    trait_data,
+    snp_col = "rsid",
+    eaf_col = "maf",
+    effect_allele_col = "ref",
+    other_allele_col = "alt",
+    pval_col = "pvalue",
+    chr_col = "chromosome",
     pos_col = "position",
     other_to_keep = c("variant", "region", paste0("lbf_variable", 1:10))
   )
-
+  
+  # Remove allele information from the variant column
   trait$variant <- sub("(_[ACGT]+_[ACGT]+)$", "", trait$variant)
-
+  
   return(trait)
 }
 

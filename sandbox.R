@@ -33,11 +33,11 @@ temp_dir_path <- "Temp"
 # https://github.com/eQTL-Catalogue/eQTL-Catalogue-resources/blob/master/tutorials/API_v2/eQTL_API_tutorial.md
 # https://github.com/eQTL-Catalogue/eQTL-Catalogue-resources/blob/master/tutorials/coloc.susie/coloc_susie.md
 
-# max_pulled_rows <- 1000
-# URL <- glue("https://www.ebi.ac.uk/eqtl/api/v2/datasets/?size={max_pulled_rows}")
-# r <- GET(URL, accept_json())
-# cont <- content(r, "text", encoding = "UTF-8")
-# datasets <- fromJSON(cont)
+max_pulled_rows <- 1000
+URL <- glue("https://www.ebi.ac.uk/eqtl/api/v2/datasets/?size={max_pulled_rows}")
+r <- GET(URL, accept_json())
+cont <- content(r, "text", encoding = "UTF-8")
+datasets <- fromJSON(cont)
 
 
 ################################################################################
