@@ -960,11 +960,59 @@ region_utils <- function(region, lead_pos, lbf_directory) {
 
 
 
+#' Conditional Fine-Mapping Wrapper Using SuSiE
+#' 
+#' Checks for existing fine-mapping results in a region and runs SuSiE if needed.
+#' Handles LD matrix computation, result caching, and error recovery.
+#'
+#' @param out Data.frame for target trait containing:
+#'   - SNP: Variant IDs
+#'   - chr: Chromosome
+#'   - pos: Genomic positions
+#'   - pval: P-values
+#' @param out_lbf_dir_path Directory path for storing/loading Bayes factor (BF) results
+#' @param N_out Sample size for outcome trait
+#' @param out_type Trait type ("quant" for quantitative, "cc" for case-control)
+#' @param out_sd Trait standard deviation (required for quantitative traits)
+#' @param trait Optional data.frame for secondary trait to define region (default: NULL)
+#' @param plink_path Path to PLINK executable (default: "plink")
+#' @param bfile_path Path to LD reference panel (default UKBB path shown)
+#' @param temp_dir_path Temporary directory for intermediate files (default: "Temp")
+#' 
+#' @return Original dataframe merged with:
+#'   - lbf_variable1-10: Bayes factors across SuSiE iterations
+#'   - variant: Formatted chr_pos identifier
+#' 
+#' @note
+#' Requires:
+#' - PLINK installed and accessible via `plink_path`
+#' - LD reference panel in PLINK binary format
+#' - SuSiE and associated fine-mapping utilities
+#' - Internal functions: lbf_in_dataframe, region_utils, finemap_susie
+#' 
+#' @details
+#' Workflow:
+#' 1. Checks for existing BFs in dataset
+#' 2. Defines genomic region using either:
+#'    - Secondary trait coordinates (if provided)
+#'    - Outcome trait coordinates (default)
+#' 3. Loads pre-computed BFs if region exists in storage
+#' 4. Runs SuSiE fine-mapping if:
+#'    - No existing results found
+#'    - At least one variant with p < 5e-2
+#' 5. Handles failed convergence by returning null BFs (-5)
+#' 6. Caches new results to avoid recomputation
+#' 
+#' @author M.Breeur
 finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
                             trait = NULL,
                             plink_path = "plink",
                             bfile_path = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
                             temp_dir_path = "Temp") {
+  lbf_in_dataframe <- function(df) {
+    required_cols <- paste0("lbf_variable", 1:10)
+    return(any(required_cols %in% colnames(df)))
+  }
   if (lbf_in_dataframe(out)) {
     message("BF are already in the dataset.")
     return(out)
@@ -1079,6 +1127,25 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
 ################################################################################
 
 
+#' Perform Colocalisation Analysis Using Bayes Factors from SuSiE
+#'
+#' This function performs colocalisation analysis on a pair of datasets containing Bayes factors 
+#' for credible sets computed via SuSiE. It utilizes the `coloc.bf_bf` function from the `coloc` package.
+#'
+#' @param trait1 A data frame containing Bayes factors for credible sets of the first trait. Must include columns 
+#'   prefixed with "lbf_variable" and a "variant" column.
+#' @param trait2 A data frame containing Bayes factors for credible sets of the second trait. Must include columns 
+#'   prefixed with "lbf_variable" and a "variant" column.
+#' @param trait1_name A character string specifying the name of the first trait. Default is "exposure".
+#' @param trait2_name A character string specifying the name of the second trait. Default is "outcome".
+#'
+#' @return A data frame summarizing the colocalisation results, including indices of credible sets and colocalisation method classification.
+#'
+#' @importFrom dplyr select mutate rename_with
+#' @importFrom stringr str_replace
+#' @importFrom coloc coloc.bf_bf
+#' 
+#' @author M. Breeur
 coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name = "outcome") {
   
   trait1_mat <- as.matrix(dplyr::select(trait1, starts_with("lbf_variable")))
@@ -1088,7 +1155,7 @@ coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name 
   numbers <- as.numeric(gsub("lbf_variable", "", col_names))
   column_order <- order(numbers)
   trait1_mat_ordered <- t(trait1_mat[, column_order])
-
+  
   trait2_mat <- as.matrix(dplyr::select(trait2, starts_with("lbf_variable")))
   row.names(trait2_mat) <- trait2$variant
   # Reorder columns if necessary
@@ -1096,22 +1163,23 @@ coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name 
   numbers <- as.numeric(gsub("lbf_variable", "", col_names))
   column_order <- order(numbers)
   trait2_mat_ordered <- t(trait2_mat[, column_order])
-
+  
   res <- coloc::coloc.bf_bf(trait2_mat_ordered, trait1_mat_ordered)$summary
   # inverting 1 and 2 because coloc_bf_bf takes entry 1 as hit2 and vice versa
-
+  
   res$idx1 <- res$idx1 - 1
   res$idx2 <- res$idx2 - 1
   
   res <- res %>% mutate(method = ifelse(idx1 == 0 & idx2 == 0, "vanilla", # coloc between the two non-finemapped signals
-                        ifelse(idx1 == 0 | idx2 == 0, "hybrid", # coloc between one susie credible set and an original signal
-                               "susie")))%>% # coloc between susie credible sets
-    rename_with(~ c(paste0("hit_", str_replace(trait1_name," ","_") ), 
-                   paste0("hit_", str_replace(trait2_name," ","_"))), 
+                                        ifelse(idx1 == 0 | idx2 == 0, "hybrid", # coloc between one susie credible set and an original signal
+                                               "susie")))%>% # coloc between susie credible sets
+    rename_with(~ c(paste0("hit_", str_replace(trait1_name," ", "_") ), 
+                    paste0("hit_", str_replace(trait2_name," ", "_"))), 
                 c(hit1, hit2))
-
+  
   return(res)
 }
+
 
 
 ################################################################################
@@ -1315,7 +1383,47 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
 }
 
 
-
+#' Generate Combined Z-Z Plot and Locus Plots for Trait Comparison
+#' 
+#' Creates a multi-panel visualization containing:
+#' - Z-Z plot showing effect direction correlation
+#' - Locus plots for both exposure and outcome traits
+#' - Colocalization highlights when applicable
+#' 
+#' @param trait Data.frame for primary trait (exposure) containing:
+#'   - SNP: Variant IDs
+#'   - pos: Genomic positions
+#'   - z: Z-scores
+#' @param out Data.frame for secondary trait (outcome) with same columns as `trait`
+#' @param res_coloc Data.frame from coloc analysis containing PP.H4.abf column
+#' @param trait_name Name for exposure trait (default: "exposure")
+#' @param out_name Name for outcome trait (default: "outcome")
+#' @param plink_path Path to PLINK executable (default: "plink")
+#' @param bfile_path Path to LD reference panel files (default UKBB path shown)
+#' @param temp_dir_path Temporary directory for intermediate files (default: "Temp")
+#' 
+#' @return A ggarrange object containing:
+#' - Top panel: Z-Z plot
+#' - Bottom panel: 
+#'   - Left: Combined p-value tracks
+#'   - Right: Exposure/outcome locus plots
+#' 
+#' @note
+#' Requires:
+#' - PLINK installed and accessible via `plink_path`
+#' - LD reference panel in PLINK binary format
+#' - ggpubr, grid, and coloc packages
+#' - Internal functions: get_ld_matrix_from_bim, align_to_LD, locus_plot, zz_plot
+#' 
+#' @details
+#' Workflow:
+#' 1. Identifies lead SNP (±500kb window) from exposure trait
+#' 2. Extracts LD matrix using reference panel
+#' 3. Aligns effect directions between traits using LD
+#' 4. Highlights colocalized SNPs when PP.H4.abf > 0.5
+#' 5. Arranges plots in publication-ready layout
+#' 
+#' @author M. Breeur
 plot.wrapper <- function(trait, out, res_coloc, trait_name = "exposure", out_name = "outcome",
                          plink_path = "plink",
                          bfile_path = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
@@ -1399,6 +1507,25 @@ plot.wrapper <- function(trait, out, res_coloc, trait_name = "exposure", out_nam
 # MR wrapper
 ################################################################################
 
+
+#' Perform Mendelian Randomization (MR) If Traits Are Colocalised
+#'
+#' This function takes colocalisation results and performs Mendelian Randomization (MR) if the two traits are colocalised.
+#' It uses the `TwoSampleMR` package to format and harmonise the data before conducting MR analysis.
+#'
+#' @param trait A data frame containing summary statistics for the exposure trait.
+#' @param out A data frame containing summary statistics for the outcome trait.
+#' @param N_out An integer specifying the sample size for the outcome trait.
+#' @param res_coloc A data frame containing colocalisation results, including a column `PP.H4.abf` for colocalisation probability.
+#' @param trait_name A character string specifying the name of the exposure trait. Default is "exposure".
+#' @param out_name A character string specifying the name of the outcome trait. Default is "outcome".
+#'
+#' @return A data frame containing MR results from `mr_singlesnp`, or `NULL` if no colocalisation is detected.
+#'
+#' @importFrom dplyr filter
+#' @importFrom TwoSampleMR format_data harmonise_data mr_singlesnp
+#' 
+#' @author M. Breeur
 mr.wrapper <- function(trait, out, N_out, res_coloc, trait_name = "exposure", out_name = "outcome") {
   colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
   if (colocalised) {
@@ -1407,18 +1534,19 @@ mr.wrapper <- function(trait, out, N_out, res_coloc, trait_name = "exposure", ou
       filter(pval.exposure < 1e-5)
     out$pheno <- out_name
     out_mr <- TwoSampleMR::format_data(as.data.frame(out),
-      snps = trait_mr$SNP,
-      type = "outcome",
-      phenotype_col = "pheno"
+                                       snps = trait_mr$SNP,
+                                       type = "outcome",
+                                       phenotype_col = "pheno"
     )
     out_mr$samplesize.outcome <- N_out
-
+    
     harm_dat_mr <- TwoSampleMR::harmonise_data(trait_mr, out_mr)
-
+    
     res_mr_single <- mr_singlesnp(harm_dat_mr, all_method = c())
   } else {
     res_mr_single <- NULL
   }
-
+  
   return(res_mr_single)
 }
+
