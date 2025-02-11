@@ -115,30 +115,30 @@ format_data <- function(dat, header = TRUE, snp_col = "SNP",
   #     datname, ") and then rerun your format_data() call."
   #   ))
   # }
-
+  
   all_cols <- c(
     snp_col, beta_col, se_col, eaf_col,
     effect_allele_col, other_allele_col, pval_col,
     z_col, chr_col, pos_col, other_to_keep
   )
-
+  
   dat <- dat %>%
     dplyr::select(any_of(all_cols))
-
+  
   if (!(snp_col %in% names(dat))) {
     stop("SNP column not found")
   }
-
+  
   dat <- dat %>%
     mutate(SNP = tolower(!!sym(snp_col)) %>% str_replace_all("[[:space:]]", "")) %>%
     filter(!is.na(SNP)) %>% # Might get rid of it when we switch to chr and pos
     dplyr::select(-!!sym(snp_col))
-
+  
   dat <- dat %>%
     mutate(dup = duplicated(SNP)) %>%
     filter(!dup) %>%
     dplyr::select(-dup)
-
+  
   dat <- dat %>%
     mutate(
       beta = as.numeric(!!sym(beta_col)),
@@ -148,11 +148,11 @@ format_data <- function(dat, header = TRUE, snp_col = "SNP",
       other_allele = toupper(as.character(!!sym(other_allele_col))),
       pval = as.numeric(!!sym(pval_col))
     )
-
+  
   if (log_pval) {
     dat$pval <- 10^-dat$pval
   }
-
+  
   dat <- dat %>%
     mutate(
       beta = ifelse(!is.finite(beta), NA, beta),
@@ -163,7 +163,7 @@ format_data <- function(dat, header = TRUE, snp_col = "SNP",
       # pval = ifelse(!is.finite(pval) | pval <= 0 | pval > 1, NA, pval),
       # pval = ifelse(pval < min_pval, min_pval, pval)
     )
-
+  
   if ("beta" %in% names(dat) && "se" %in% names(dat) && !"pval" %in% names(dat)) {
     dat <- dat %>%
       mutate(
@@ -171,39 +171,39 @@ format_data <- function(dat, header = TRUE, snp_col = "SNP",
         pval_origin = "inferred"
       )
   }
-
+  
   if (z_col %in% names(dat)) {
     dat <- dat %>%
       mutate(z = !!sym(z_col))
   } else {
     dat <- dat %>% mutate(z = beta / se)
   }
-
+  
   if (chr_col %in% names(dat)) {
     dat <- dat %>%
       mutate(chr = !!sym(chr_col))
   }
-
+  
   if (pos_col %in% names(dat)) {
     dat <- dat %>%
       mutate(pos = !!sym(pos_col))
   }
-
+  
   for (col in c("SNP", "beta", "se", "effect_allele", "other_allele", "eaf")) {
     if (!col %in% names(dat)) {
       dat[[col]] <- NA
     }
   }
-
+  
   rownames(dat) <- NULL
-
-
+  
+  
   dat <- dat %>% mutate(
     variant = paste0("chr", chr, "_", pos),
     R = w^2 / (w^2 + se^2), # Calculate R-score MIGHT NOT BE CORRECT
     lbf_variable0 = 0.5 * (log(1 - R) + (R * z^2)) # Calculate log Bayes factor
   )
-
+  
   return(dat)
 }
 
@@ -240,7 +240,7 @@ format_data <- function(dat, header = TRUE, snp_col = "SNP",
 #' @author M.Breeur, adapted from https://rdrr.io/github/neurogenomics/MungeSumstats/src/R/get_genome_build.R
 get_genome_build <- function(data, sampled_snps = 500, dbSNP = 155) {
   seqnames <- chr <- SNP <- pos <- NULL
-
+  
   # Do some filtering first to avoid errors
   data <- data[complete.cases(SNP, chr, pos)]
   # also remove common incorrect formatting of SNP
@@ -249,20 +249,20 @@ get_genome_build <- function(data, sampled_snps = 500, dbSNP = 155) {
   # also deal with common misformatting of CHR
   # if chromosome col has chr prefix remove it
   data[, chr := gsub("chr", "", chr)]
-
+  
   # if removing erroneous cases leads to <min(10k,50% org dataset) will fail -
   # NOT ENOUGH DATA TO INFER
   nrow_clean <- nrow(data)
-
+  
   # Downsample SNPs to save time
   if ((nrow(data) > sampled_snps) && !(is.null(sampled_snps))) {
     snps <- sample(data$SNP, sampled_snps)
   } else { # nrow(data)<10k
     snps <- data$SNP
   }
-
+  
   data <- data[SNP %in% snps, ]
-
+  
   snp_loc_data_37 <- MungeSumstats:::load_ref_genome_data(
     snps = snps,
     ref_genome = "GRCH37",
@@ -281,13 +281,13 @@ get_genome_build <- function(data, sampled_snps = 500, dbSNP = 155) {
   # Now check which genome build has more matches to data
   num_37 <-
     nrow(snp_loc_data_37[data, ,
-      on = c("SNP" = "SNP", "pos" = "pos", "seqnames" = "chr"),
-      nomatch = FALSE
+                         on = c("SNP" = "SNP", "pos" = "pos", "seqnames" = "chr"),
+                         nomatch = FALSE
     ])
   num_38 <-
     nrow(snp_loc_data_38[data, ,
-      on = c("SNP" = "SNP", "pos" = "pos", "seqnames" = "chr"),
-      nomatch = FALSE
+                         on = c("SNP" = "SNP", "pos" = "pos", "seqnames" = "chr"),
+                         nomatch = FALSE
     ])
   # if no matches throw error
   if (num_37 == 0 && num_38 == 0) {
@@ -306,7 +306,7 @@ get_genome_build <- function(data, sampled_snps = 500, dbSNP = 155) {
     ref_gen_num <- num_38
     ref_genome <- "GRCH38"
   }
-
+  
   message("Inferred genome build: ", ref_genome)
   # add a warning if low proportion of matches found
   msg <- paste0(
@@ -328,15 +328,24 @@ get_genome_build <- function(data, sampled_snps = 500, dbSNP = 155) {
 #' by comparing SNP chromosomal positions against a GRCh38 reference. It assumes GRCh37 if there's 
 #' insufficient matching with GRCh38.
 #'
-#' @param data A data.table containing GWAS summary statistics. Must include columns: SNP (rsID), chr (chromosome), pos (position).
+#' @param data A data.table containing GWAS summary statistics. Must include columns for SNP (rsID), chromosome, and position, which can be specified with snp_col, chr_col, pos_col.
 #' @param sampled_snps Number of SNPs to sample for comparison (default: 500). Uses all SNPs if dataset is smaller.
 #' @param path_to_38 Path to reference file for GRCh38 build (expected columns: SNP, chr, pos).
+#' @param snp_col Name of the column in `data` containing SNP rsIDs. Default is "SNP".
+#' @param chr_col Name of the column in `data` containing chromosome numbers. Default is "chr".
+#' @param pos_col Name of the column in `data` containing base-pair positions. Default is "pos".
 #' 
 #' @return Character string indicating inferred genome build ("GRCH37" or "GRCH38")
 #' 
 #' @author M. Breeur
-get_genome_build_local <- function(data, sampled_snps = 500, path_to_38) {
+get_genome_build_local <- function(data, sampled_snps = 500, path_to_38,
+                                   snp_col = "SNP", chr_col = "chr", pos_col = "pos") {
   
+  data <- data %>% mutate(
+    SNP = !!sym(snp_col),
+    chr = !!sym(chr_col),
+    pos = !!sym(pos_col)
+  )
   # Remove rows with missing values in key columns
   data <- data[complete.cases(SNP, chr, pos)]
   
@@ -359,6 +368,7 @@ get_genome_build_local <- function(data, sampled_snps = 500, path_to_38) {
   ref38 <- fread(path_to_38)
   
   # Ensure chromosome column type matches in both datasets
+  ref38[, chr := gsub("chr", "", chr)]
   ref38[, chr := as.character(chr)]
   data[, chr := as.character(chr)]
   
@@ -383,6 +393,8 @@ get_genome_build_local <- function(data, sampled_snps = 500, path_to_38) {
   
   return(ref_genome)
 }
+
+
 
 
 #' Lift genomic coordinates from hg19 to hg38 using chain file
@@ -414,11 +426,13 @@ get_genome_build_local <- function(data, sampled_snps = 500, path_to_38) {
 #' 5. Returns dataframe with updated coordinates
 #' 
 #' @author M. Breeur
-lift_coordinates <- function(sumstats, chain_file) {
+lift_coordinates <- function(sumstats, chain_file, snp_col = "SNP", chr_col = "chr", pos_col = "pos") {
   # Check required columns
-  if (!all(c("SNP", "chr", "pos") %in% colnames(sumstats))) {
-    stop("Dataframe must contain columns: SNP, chr, pos")
-  }
+  sumstats <- sumstats %>% mutate(
+    SNP = !!sym(snp_col),
+    chr = !!sym(chr_col),
+    pos = !!sym(pos_col)
+  )
   
   # Add 'chr' prefix if missing
   if (!any(grepl("^chr", sumstats$chr[1]))) {
@@ -452,12 +466,17 @@ lift_coordinates <- function(sumstats, chain_file) {
   merged <- merge(sumstats, sumstats38[, c("SNP", "chr38", "pos38")], by = "SNP")
   
   # Remove original coordinates and rename new ones
-  merged <- as.data.frame(merged)[, !(names(merged) %in% c("chr", "pos"))]
+  merged <- as.data.frame(merged) %>% 
+    dplyr::select(-c(chr, pos)) 
+  merged <- merged %>% mutate(
+    !!sym(chr_col) := chr38,
+    !!sym(pos_col) := pos38
+  )%>% dplyr::select(-c(chr38, pos38)) 
+  
   names(merged)[names(merged) %in% c("chr38", "pos38")] <- c("chr", "pos")
   
   return(merged)
 }
-
 
 
 
@@ -473,8 +492,6 @@ lift_coordinates <- function(sumstats, chain_file) {
 #'
 #' @import data.table
 #' @import dplyr
-#' 
-#' @author M.Breeur
 #' @export
 format_eqtl_cat_trait <- function(trait, path_lbf, path_sumstats) {
   # Load LBF and summary statistics data
@@ -554,16 +571,16 @@ format_eqtl_cat_trait <- function(trait, path_lbf, path_sumstats) {
 get_ld_matrix_1000g <- function(rsid_list, with_alleles = T) {
   # Compute the LD matrix using the ieugwasr package
   LD_Full <- ieugwasr::ld_matrix(rsid_list, with_alleles = with_alleles)
-
+  
   # Format the LD matrix for analysis
   LD <- LD_Full[, !colnames(LD_Full) %in% names(which(colSums(is.na(as.matrix(LD_Full))) > dim(LD_Full) - 1))]
   LD <- LD[complete.cases(LD), ]
   rownames(LD) <- colnames(LD)
-
+  
   # Prepare a version for plotting
   LD_Full <- as.data.frame(LD_Full)
   LD_Full$RS_number <- rownames(LD)
-
+  
   # Return the results
   return(list(LD_Anal = LD, LD_Plot = LD_Full))
 }
@@ -612,16 +629,16 @@ get_ld_matrix_1000g <- function(rsid_list, with_alleles = T) {
 #' @export
 get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory = NULL, with_alleles = TRUE, temp_dir_path = NULL) {
   # Determine shell type based on operating system
-  shell <- ifelse(Sys.info()["sysname"] == "Windows", "cmd", "sh")
-
+  # shell <- ifelse(Sys.info()["sysname"] == "Windows", "cmd", "srun")
+  
   # Create a temporary file to store rsID list
   set.temp.dir(temp_dir_path)
   fn <- temp.file("extracted_snp", temp_dir_path)
   write.table(data.frame(rsid_list),
-    file = fn, row.names = FALSE,
-    col.names = FALSE, quote = FALSE
+              file = fn, row.names = FALSE,
+              col.names = FALSE, quote = FALSE
   )
-
+  
   # Calculate memory allocation for PLINK
   if (is.null(plink_memory)) {
     # Use 75% of available memory
@@ -630,80 +647,101 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
   } else {
     plink_memory <- as.character(plink_memory)
   }
-
+  
   # Generate BIM file with PLINK
-  fun1 <- paste0(
-    shQuote(plink_loc, type = shell), " --bfile ",
-    shQuote(bfile_loc, type = shell), " --extract ", shQuote(fn, type = shell),
-    " --make-just-bim --keep-allele-order --out ", shQuote(fn, type = shell),
-    " --memory ", plink_memory
+  fun1 <- paste("srun",
+                plink_loc, "--bfile", bfile_loc,
+                "--extract", paste0(temp_dir_path,"/extracted_snp"),
+                "--make-just-bim --keep-allele-order --out", paste0(temp_dir_path,"/extracted_snp"),
+                "--memory", plink_memory
   )
   system(fun1, ignore.stdout = TRUE, ignore.stderr = TRUE)
-
+  
   # Read the BIM file containing SNP metadata
   bim <- read.table(paste0(fn, ".bim"), stringsAsFactors = FALSE)
-
+  
   # Compute LD matrix with PLINK
-  fun2 <- paste0(
-    shQuote(plink_loc, type = shell), " --bfile ",
-    shQuote(bfile_loc, type = shell), " --extract ", shQuote(fn, type = shell),
-    " --r square --keep-allele-order --out ", shQuote(fn, type = shell),
-    " --memory ", plink_memory
+  fun2 <- paste("srun",
+                plink_loc, "--bfile", bfile_loc,
+                "--extract", paste0(temp_dir_path,"/extracted_snp"),
+                "--r square --keep-allele-order --out", paste0(temp_dir_path,"/extracted_snp"),
+                "--memory", plink_memory
   )
   system(fun2, ignore.stdout = TRUE, ignore.stderr = TRUE)
-
+  
   # Read the LD matrix into R as a numeric matrix
   res <- read.table(paste0(fn, ".ld"), header = FALSE) %>% as.matrix()
-
+  
   # Annotate matrix with allele information if specified
   if (with_alleles) {
     rownames(res) <- colnames(res) <- paste(bim$V2, bim$V5, bim$V6, sep = "_")
   } else {
     rownames(res) <- colnames(res) <- bim$V2
   }
-
+  
   # Clean up temporary files
   cleanup.temp.dir(temp_dir_path)
-
+  
   to_exclude <- names(which(colSums(is.na(as.matrix(res))) > 0))
   res <- res[!rownames(res) %in% to_exclude, !colnames(res) %in% to_exclude]
-
+  
   return(res)
 }
 
 
 
 
+#' Align SNPs to LD Matrix
+#'
+#' This function aligns SNPs in a dataset to match the allele orientation of a given LD matrix.
+#'
+#' @param data A data frame containing SNPs with columns including `SNP`,`effect_allele`, `other_allele`, `beta`, `z`, and `eaf`.
+#' @param LD_matrix A matrix with column names formatted as `SNP_A1_A2`, where `SNP` is the SNP ID, `A1` is the reference allele, and `A2` is the alternate allele.
+#'
+#' @return A data frame with SNPs aligned to the LD matrix, with `beta`, `z`, and `eaf` values adjusted accordingly. SNPs that cannot be aligned are excluded with a warning.
+#'
+#' @import dplyr
+#' @import stringr
+#' 
+#' @author M.Breeur
 align_to_LD <- function(data, LD_matrix) {
+  # Extract SNP, reference allele (A1), and alternate allele (A2) from LD matrix column names
   LD_alignment <- data.frame(
     SNP = str_split_fixed(colnames(LD_matrix), "_", 3)[, 1],
     LD_A1 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 2],
     LD_A2 = str_split_fixed(colnames(LD_matrix), "_", 3)[, 3]
   )
+  
+  # Merge input data with LD alignment information
   temp <- merge(data, LD_alignment) %>%
     mutate(
-      temp_effect_allele = effect_allele,
-      temp_other_allele = other_allele
+      temp_effect_allele = effect_allele,  # Store original effect allele
+      temp_other_allele = other_allele     # Store original other allele
     )
+  
+  # Identify and flip alleles if necessary
   temp <- temp %>%
     mutate(
-      flipped = effect_allele != LD_A1,
+      flipped = effect_allele != LD_A1,  # Determine if flipping is required
       effect_allele = if_else(flipped, temp_other_allele, temp_effect_allele),
       other_allele = if_else(flipped, temp_effect_allele, temp_other_allele),
-      beta = if_else(flipped, -beta, beta),
-      z = if_else(flipped, -z, z),
-      eaf = if_else(flipped, 1 - eaf, eaf)
+      beta = if_else(flipped, -beta, beta),  # Flip beta coefficient if alleles are flipped
+      z = if_else(flipped, -z, z),          # Flip z-score accordingly
+      eaf = if_else(flipped, 1 - eaf, eaf)  # Adjust effect allele frequency
     )
-
+  
+  # Check for inconsistencies in allele alignment and exclude problematic SNPs
   if (any(temp$LD_A1 != temp$effect_allele)) {
-    # Stop execution if alleles cannot be aligned
-    n_excl <- sum(temp$LD_A1 != temp$effect_allele)
-    temp <- temp %>% filter(LD_A1 == effect_allele)
+    n_excl <- sum(temp$LD_A1 != temp$effect_allele)  # Count excluded SNPs
+    temp <- temp %>% filter(LD_A1 == effect_allele)  # Remove misaligned SNPs
     warning(paste0("Inconsistent alleles when matching to LD matrix. Excluding ", as.character(n_excl), " variants from the analysis."))
   }
-
-  return(temp %>% select(-c(temp_other_allele, temp_effect_allele)))
+  
+  # Return cleaned dataset with unnecessary columns removed
+  return(temp %>% dplyr::select(-c(temp_other_allele, temp_effect_allele)))
 }
+
+
 
 
 ################################################################################
@@ -740,15 +778,15 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
                           ...) {
   # Check input consistency
   # exp_type
-
+  
   # Import exposure data if provided as a file path
   if (is.character(exp_data)) {
     exp_data <- read.csv(exp_data)
   }
-
+  
   harm_data <- exp_data
   # Import LD_matrix if provided as file paths, or import from 1000G if NULL
-
+  
   tic("Loading LD matrix")
   if (is.null(LD_matrix)) {
     if (is.null(bfile_loc) | is.null(plink_loc)) {
@@ -761,10 +799,10 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       })
     } else {
       LD_matrix <- get_ld_matrix_from_bim(harm_data$SNP,
-        plink_loc = plink_loc,
-        bfile_loc = bfile_loc,
-        with_alleles = T,
-        temp_dir_path = temp_dir_path
+                                          plink_loc = plink_loc,
+                                          bfile_loc = bfile_loc,
+                                          with_alleles = T,
+                                          temp_dir_path = temp_dir_path
       )
     }
   } else {
@@ -773,11 +811,11 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
     }
   }
   toc()
-
+  
   # Check if allele information is present in the LD matrix and align if necessary
   tic("Flipping alleles to match LD_mat")
   if (!(all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 2])) &
-    all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 3])))) {
+        all(grepl("^[ACTG]+$", str_split_fixed(colnames(LD_matrix), "_", 3)[, 3])))) {
     # Handle case where allele information is missing or incorrect
     warning("LD matrix has no or incorrect allele information, allele alignment will be inferred from expected Z-scores vs. observed Z-scores")
     harm_data <- harm_data %>%
@@ -807,14 +845,14 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
         beta = if_else(flipped, -beta, beta),
         eaf = if_else(flipped, 1 - eaf, eaf)
       )
-
+    
     if (any(temp$LD_A1 != temp$effect_allele)) {
       # Stop execution if alleles cannot be aligned
       n_excl <- sum(temp$LD_A1 != temp$effect_allele)
       temp <- temp %>% filter(LD_A1 == effect_allele)
       warning(paste0("Inconsistent alleles when matching to LD matrix. Excluding ", as.character(n_excl), " variants from the analysis."))
     }
-
+    
     harm_data <- temp %>%
       dplyr::select(
         SNP, pos,
@@ -824,11 +862,11 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       )
   }
   toc()
-
+  
   # Remove alleles from LD matrix column names for cross ref with ext/out data
   colnames(LD_matrix) <- str_split_fixed(colnames(LD_matrix), "_", 2)[, 1]
   rownames(LD_matrix) <- colnames(LD_matrix)
-
+  
   # Prepare data for SuSiE colocalization analysis
   tic("Formatting data for SuSiE")
   exp_for_coloc <- harm_data %>%
@@ -850,15 +888,15 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   exp_for_coloc$N <- N_exp
   exp_for_coloc$LD <- LD_matrix[exp_for_coloc$snp, exp_for_coloc$snp]
   toc()
-
+  
   # Check alignment between exposure data and LD matrix
   # Flags for faulty allele alignment
   if (run_checks) {
     tic("Running checks for SuSiE input")
     exp_qc <- list(
       kriging = kriging_rss(exp_for_coloc$beta / sqrt(exp_for_coloc$varbeta),
-        exp_for_coloc$LD,
-        n = N_exp
+                            exp_for_coloc$LD,
+                            n = N_exp
       ),
       alignment_check = tryCatch(expr = {
         check_alignment(exp_for_coloc)
@@ -877,30 +915,30 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   } else {
     exp_qc <- NULL
   }
-
+  
   # Calculate Z-scores for SuSiE
   z <- harm_data$beta / harm_data$se
-
+  
   snp <- harm_data$SNP
   names(z) <- snp
   LD <- LD_matrix[snp, snp]
-
+  
   # Initialize convergence flag
   converged <- FALSE
-
+  
   # Set defaults for SuSiE arguments
   susie_args <- list(...)
-
+  
   # Include sample size parameter if not already specified
   susie_args <- c(list(n = N_exp), susie_args)
-
+  
   # Set prior variance with regard to trait type and sdY
   if (exp_type == "quant") {
     susie_args <- c(list(prior_variance = (.15 / exp_sd)^2, estimate_prior_variance = FALSE), susie_args)
   } else {
     susie_args <- c(list(prior_variance = .2^2, estimate_prior_variance = FALSE), susie_args)
   }
-
+  
   # Iteratively run SuSiE until convergence or maximum iterations are reached
   while (!converged) {
     message("Running max iterations: ", max_iter)
@@ -917,14 +955,14 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
       max_iter <- max_iter * 10
     } # Increase iterations if not converged
   }
-
+  
   return(susie.res)
 }
 
 
 region_utils <- function(region, lead_pos, lbf_directory) {
   # Find out region of interest
-
+  
   lead_chr <- str_remove(str_split_fixed(region, ":", 2)[1], "chr")
   pos_interval <- str_split_fixed(region, ":", 2)[, 2]
   if (length(str_split(pos_interval, "-")[[1]]) == 2) {
@@ -935,14 +973,14 @@ region_utils <- function(region, lead_pos, lbf_directory) {
     pos_low <- -as.numeric(str_split(pos_interval, "-")[[1]][2])
     pos_high <- as.numeric(str_split(pos_interval, "-")[[1]][3])
   }
-
+  
   required_start <- lead_pos - 500000
   required_end <- lead_pos + 500000
-
+  
   # List files in lbf_directory
-
+  
   lbf_file_list <- list.files(lbf_directory, full.names = FALSE)
-
+  
   # Extract chromosome and positions
   coverage <- as.data.frame(
     do.call(rbind, lapply(lbf_file_list, function(file) {
@@ -958,17 +996,17 @@ region_utils <- function(region, lead_pos, lbf_directory) {
       }
     }))
   )
-
-
+  
+  
   # See if required region is covered
   if (nrow(coverage) > 0) {
     filtered_coverage <- subset(coverage, chromosome == lead_chr)
     position_covered <- filtered_coverage[(filtered_coverage$start_position <= required_start) &
-      (filtered_coverage$end_position >= required_end), ]
+                                            (filtered_coverage$end_position >= required_end), ]
   } else {
     position_covered <- coverage
   }
-
+  
   return(list(
     region = list(
       chr = lead_chr,
@@ -1063,8 +1101,8 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
       )
       region_utils <- region_utils(region, lead_pos, out_lbf_dir_path)
     }
-
-
+    
+    
     if (region_utils$is_pos_covered) {
       message(paste0("Region already fine-mapped. Loading the BFs from ", out_lbf_dir_path))
       out_trait_susie <- NULL
@@ -1079,12 +1117,12 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
       ))
     } else {
       message("Region not covered. Computing the BFs...")
-
+      
       ## Find out if anything passes the conventional significance threshold
-
+      
       if (any(out$pval < 5e-2)) {
         ## Run the finemapping
-
+        
         tic("Running SuSiE")
         out_trait_susie <- tryCatch(expr = {
           finemap_susie(
@@ -1105,13 +1143,13 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
           NULL
         })
         toc()
-
+        
         if (!is.null(out_trait_susie)) {
           out_lbf <- as.data.frame(t(out_trait_susie$lbf_variable)) %>%
             setNames(paste0("lbf_variable", 1:10)) %>%
             rownames_to_column("SNP") %>%
             left_join(out %>%
-              transmute(variant = paste0("chr", chr, "_", pos), SNP), by = "SNP")
+                        transmute(variant = paste0("chr", chr, "_", pos), SNP), by = "SNP")
         } else {
           out_lbf <- as.data.frame(matrix(-5, nrow = nrow(out), ncol = 10)) %>%
             setNames(paste0("lbf_variable", 1:10)) %>%
@@ -1120,7 +1158,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
               SNP = out$SNP
             )
         }
-
+        
         saveRDS(out_lbf, file = paste0(
           out_lbf_dir_path, "/lbf_chr",
           region_utils$region$chr, "_",
@@ -1130,7 +1168,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
       } else {
         message("No variant crosses the significance threshold. Returning BF = 0")
         out_trait_susie <- NULL
-
+        
         out_lbf <- as.data.frame(matrix(-5, nrow = nrow(out), ncol = 10)) %>%
           setNames(paste0("lbf_variable", 1:10)) %>%
           mutate(
@@ -1237,21 +1275,21 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP = NULL,
   # Add a column 'RS_number' to the LD matrix that stores SNP identifiers
   colnames(LD_Mat) <- str_split_fixed(colnames(LD_Mat), "_", 3)[, 1]
   LD_Mat$RS_number <- str_split_fixed(rownames(LD_Mat), "_", 3)[, 1]
-
+  
   # Subset the LD matrix to retain only the lead_SNP column for plotting
   LD_TEMP <- LD_Mat[, c("RS_number", lead_SNP)]
-
+  
   ## Step 2: Merge LD information with harmonized data
   # Merge the harmonized data (Harm_dat) with the LD data, matching SNP identifiers
   temp_dat_format <- as.data.frame(merge(Harm_dat, LD_TEMP, by.x = "SNP", by.y = "RS_number", all.x = TRUE))
-
+  
   # Square the LD values to calculate r^2 for the coloc SNP
   temp_dat_format[, lead_SNP] <- temp_dat_format[, lead_SNP]^2
-
+  
   ## Step 3: Handle missing LD values and define LD color categories
   # Replace NA LD values with 0 for consistency
   temp_dat_format[, lead_SNP] <- ifelse(is.na(temp_dat_format[, lead_SNP]), 0, temp_dat_format[, lead_SNP])
-
+  
   # Create a new 'LD' column categorising LD strength into bins
   temp_dat_format <- temp_dat_format %>%
     mutate(
@@ -1265,20 +1303,20 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP = NULL,
         TRUE ~ "No LD"
       )
     )
-
+  
   # Assign the "Lead SNP" label to the coloc SNP
   temp_dat_format$LD <- ifelse(temp_dat_format$SNP == lead_SNP, "Lead SNP", temp_dat_format$LD)
-
+  
   # Create a flag to highlight the coloc SNP
   temp_dat_format <- temp_dat_format %>% mutate(coloc_flag = case_when(SNP == lead_SNP ~ "Yes", TRUE ~ "No"))
-
+  
   ## Step 4: Calculate Z-scores for exposure and outcome
   # Compute Z-scores: beta divided by the standard error
-
+  
   ## Step 5: Generate the Z-Z plot
   # Use jitter to slightly shift points for better visualization
   pos <- position_jitter(width = 0.5, seed = 1)
-
+  
   # Plot the Z-scores with SNPs color-coded by LD category
   plot <- temp_dat_format %>%
     mutate(LD = fct_reorder(LD, get(lead_SNP))) %>% # Reorder LD levels for better display
@@ -1312,7 +1350,7 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP = NULL,
       "LD > 0.8" = "#8856A7",
       "Lead SNP" = "#F768A1"
     ))
-
+  
   ## Step 6: Return the final plot
   return(plot)
 }
@@ -1336,14 +1374,14 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
   # Compute -log10(p-value) for exposure and outcome
   harm_dat$log10p.exp <- -pchisq((harm_dat$beta.x / harm_dat$se.x)^2, df = 1, lower.tail = FALSE, log.p = TRUE) / log(10)
   harm_dat$log10p.out <- -pchisq((harm_dat$beta.y / harm_dat$se.y)^2, df = 1, lower.tail = FALSE, log.p = TRUE) / log(10)
-
+  
   # Extract the lead SNP column for plotting
   colnames(LD_Mat) <- str_split_fixed(colnames(LD_Mat), "_", 3)[, 1]
   LD_Mat$RS_number <- str_split_fixed(rownames(LD_Mat), "_", 3)[, 1]
   LD_TEMP <- LD_Mat[, c("RS_number", lead_SNP)]
   harm_dat <- merge(harm_dat, LD_TEMP, by.x = "SNP", by.y = "RS_number", all.x = TRUE)
   harm_dat[, lead_SNP] <- harm_dat[, lead_SNP]^2 # Square the LD values
-
+  
   # Assign LD category labels
   harm_dat <- harm_dat %>%
     mutate(
@@ -1357,21 +1395,21 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
         TRUE ~ "No LD"
       )
     )
-
-
+  
+  
   # Mark lead SNP in LD category
   harm_dat$LD <- ifelse(harm_dat$SNP == lead_SNP, "Lead SNP", harm_dat$LD)
   harm_dat <- harm_dat %>% mutate(lead_flag = case_when(SNP == lead_SNP ~ "Yes", TRUE ~ "No"))
-
+  
   # Define factor levels for LD categories
   harm_dat$LD <- factor(harm_dat$LD, levels = c("No LD", "LD < 0.2", "0.2 < LD < 0.4", "0.4 < LD < 0.6", "0.6 < LD < 0.8", "LD > 0.8", "Lead SNP"))
-
+  
   # Define LD color mapping
   ld_colors <- c(
     "No LD" = "#D3D3D3", "LD < 0.2" = "#225EA8", "0.2 < LD < 0.4" = "#41B6C4",
     "0.4 < LD < 0.6" = "#7FCDBB", "0.6 < LD < 0.8" = "#FE9929", "LD > 0.8" = "#8856A7", "Lead SNP" = "#F768A1"
   )
-
+  
   # Generate scatter plot for p-values
   p_p_plot <- ggplot(harm_dat, aes(x = log10p.exp, y = log10p.out, color = LD)) +
     geom_point(size = 2) +
@@ -1385,7 +1423,7 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
     ggtitle(paste0("P-values ", exp_name, " vs ", out_name)) +
     scale_color_manual(values = ld_colors, guide = "none") +
     geom_label_repel(data = harm_dat %>% filter(SNP %in% c(lead_SNP, coloc_SNP)), aes(label = SNP), size = 5, show.legend = FALSE)
-
+  
   # Generate Manhattan plots for exposure and outcome
   locus_plot_generator <- function(y_var, name, title_prefix) {
     ggplot(harm_dat, aes(x = pos.x, y = !!sym(y_var), color = LD)) +
@@ -1397,10 +1435,10 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
       scale_color_manual(values = ld_colors, guide = "none") +
       geom_label_repel(data = harm_dat %>% filter(SNP %in% c(lead_SNP, coloc_SNP)), aes(label = SNP), size = 3, show.legend = FALSE)
   }
-
+  
   locus_out <- locus_plot_generator("log10p.exp", exp_name, "Locus Manhattan plot for ")
   locus_exp <- locus_plot_generator("log10p.out", out_name, "Locus Manhattan plot for ")
-
+  
   # Return a list of plots
   return(list(pvalues_at_locus = p_p_plot, outcome_at_locus = locus_out, exposure_at_locus = locus_exp))
 }
@@ -1456,53 +1494,53 @@ plot.wrapper <- function(trait, out, res_coloc, trait_name = "exposure", out_nam
     filter(abs(z) == max(abs(z), na.rm = TRUE)) %>%
     pull(pos) %>%
     mean()
-
+  
   required_start <- lead_pos - 500000
   required_end <- lead_pos + 500000
-
+  
   # Extract LD matrix
   SNP_list <- trait$SNP[between(trait$pos, required_start, required_end)]
-
+  
   LD_matrix <- get_ld_matrix_from_bim(SNP_list,
-    plink_loc = plink_path,
-    bfile_loc = bfile_path,
-    with_alleles = T,
-    temp_dir_path = temp_dir_path
+                                      plink_loc = plink_path,
+                                      bfile_loc = bfile_path,
+                                      with_alleles = T,
+                                      temp_dir_path = temp_dir_path
   )
-
+  
   ## Extract lead snp from trait
-
+  
   lead_snp <- unique(trait$SNP[which.min(abs(trait$pos - lead_pos))])
-
+  
   ## Flip z scores if needed, according to LD_mat
-
+  
   harm_dat <- merge(
     align_to_LD(trait, LD_matrix),
     align_to_LD(out, LD_matrix),
     by = c("variant", "SNP")
   )
-
+  
   ## Make locus and zz plots, store them in list
-
+  
   # Highlight coloc_snp if colocalised
   colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
   if (colocalised) {
     # coloc_snp = hit in hit_out_name
-    vars <- res_coloc %>% select(!!sym(paste0("hit_", str_replace(out_name," ","_"))))
+    vars <- as.data.frame(res_coloc) %>% dplyr::select(!!sym(paste0("hit_", str_replace(out_name," ","_"))))
     coloc_snp <- out$SNP[out$variant == vars[which.max(res_coloc$PP.H4.abf)]]
   } else {
     coloc_snp <- NULL
   }
-
+  
   plot_list <- locus_plot(as.data.frame(LD_matrix),
-    as.data.frame(harm_dat),
-    lead_SNP = lead_snp,
-    coloc_SNP = coloc_snp,
-    exp_name = trait_name,
-    out_name = out_name
+                          as.data.frame(harm_dat),
+                          lead_SNP = lead_snp,
+                          coloc_SNP = coloc_snp,
+                          exp_name = trait_name,
+                          out_name = out_name
   )
-
-
+  
+  
   plot_list$zzplot <- zz_plot(
     LD_Mat = as.data.frame(LD_matrix),
     lead_SNP = lead_snp,
@@ -1511,16 +1549,16 @@ plot.wrapper <- function(trait, out, res_coloc, trait_name = "exposure", out_nam
     exp_name = trait_name,
     out_name = out_name
   )
-
+  
   return(ggarrange(plot_list$zzplot,
-    ggarrange(plot_list$pvalues_at_locus,
-      ggarrange(plot_list$exposure_at_locus,
-        plot_list$outcome_at_locus,
-        nrow = 2
-      ),
-      ncol = 2, widths = c(1, .8)
-    ),
-    nrow = 2
+                   ggarrange(plot_list$pvalues_at_locus,
+                             ggarrange(plot_list$exposure_at_locus,
+                                       plot_list$outcome_at_locus,
+                                       nrow = 2
+                             ),
+                             ncol = 2, widths = c(1, .8)
+                   ),
+                   nrow = 2
   ))
 }
 
@@ -1572,4 +1610,5 @@ mr.wrapper <- function(trait, out, N_out, res_coloc, trait_name = "exposure", ou
   
   return(res_mr_single)
 }
+
 
