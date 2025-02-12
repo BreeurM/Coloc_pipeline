@@ -151,7 +151,7 @@ res_mr <- mr.wrapper(trait, out, N_out, res_coloc, trait_id, out_id)
 ################################################################################
 
 
-plots <- plot.wrapper(trait, out, res_coloc, res_mr, trait_id, out_id)
+plots <- plot.wrapper(trait, out, res_coloc, res_mr, trait_id, out_id, out_type)
 
 
 ################################################################################

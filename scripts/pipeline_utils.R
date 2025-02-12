@@ -64,8 +64,6 @@ cleanup.temp.dir <- function(path) {
   }
 }
 
-
-
 ################################################################################
 # Data formatting
 ################################################################################
@@ -99,7 +97,7 @@ cleanup.temp.dir <- function(path) {
 #' @param pos_col The default is `"pos"`.
 #' @param log_pval The pval is -log10(P). The default is `FALSE`.
 #'
-#' @author Optimised from TwoSampleMR https://github.com/MRCIEU/TwoSampleMR/blob/master/R/read_data.R
+#' @author M.Breeur, optimised from TwoSampleMR https://github.com/MRCIEU/TwoSampleMR/blob/master/R/read_data.R
 format_data <- function(dat, header = TRUE, snp_col = "SNP",
                         beta_col = "beta", se_col = "se", eaf_col = "eaf",
                         effect_allele_col = "effect_allele",
@@ -202,6 +200,10 @@ format_data <- function(dat, header = TRUE, snp_col = "SNP",
     variant = paste0("chr", chr, "_", pos),
     R = w^2 / (w^2 + se^2), # Calculate R-score MIGHT NOT BE CORRECT
     lbf_variable0 = 0.5 * (log(1 - R) + (R * z^2)) # Calculate log Bayes factor
+  )
+  
+  dat <- dat %>% mutate(
+    chr = ifelse(chr == "X", "23", chr)
   )
   
   return(dat)
@@ -534,6 +536,11 @@ format_eqtl_cat_trait <- function(trait, path_lbf, path_sumstats) {
   
   # Remove allele information from the variant column
   trait$variant <- sub("(_[ACGT]+_[ACGT]+)$", "", trait$variant)
+  
+  # Reformat X chr
+  trait <- trait %>% mutate(
+    chr = ifelse(chr == "X", "23", chr)
+  )
   
   return(trait)
 }
@@ -1234,8 +1241,10 @@ coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name 
     rename_with(~ c(paste0("hit_", str_replace(trait1_name," ", "_") ), 
                     paste0("hit_", str_replace(trait2_name," ", "_"))), 
                 c(hit1, hit2))
+  
   return(res)
 }
+
 
 
 
@@ -1289,7 +1298,6 @@ mr.wrapper <- function(trait, out, N_out, res_coloc, trait_name = "exposure", ou
   
   return(res_mr_single)
 }
-
 
 
 
@@ -1503,6 +1511,7 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
 }
 
 
+
 #' Generate a Colocalization and Mendelian Randomization Summary Table
 #'
 #' This function creates a summary table of colocalization and Mendelian Randomization (MR) results,
@@ -1520,7 +1529,7 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
 #' 
 #' @import dplyr ggpubr stringr
 #' @author M.Breeur
-coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure", out_name = "outcome") {
+coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure", out_name = "outcome", out_type = "quant") {
   
   # Filter colocalization results where PP.H4.abf > 0.5 and select relevant columns
   temp <- res_coloc %>%
@@ -1561,27 +1570,51 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
   
   # Add MR results if colocalization data exists
   if (nrow(temp) > 0){
-    temp <- temp %>%
-      left_join(
-        res_mr %>% select(SNP, p, b, se),
-        by = setNames("SNP", paste0("SNP_", trait_name))
-      ) %>% mutate(MR_beta = sprintf("%.2f (%.2f, %.2f)", 
-                                     b, 
-                                     b - 1.96 * se, 
-                                     b + 1.96 * se)) %>%
-      rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
+    if(out_type == "quant"){
+      temp <- temp %>%
+        left_join(
+          res_mr %>% select(SNP, p, b, se),
+          by = setNames("SNP", paste0("SNP_", trait_name))
+        ) %>% mutate(MR_beta = sprintf("%.2f (%.2f, %.2f)", 
+                                       b, 
+                                       b - 1.96 * se, 
+                                       b + 1.96 * se)) %>%
+        rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
+      
+      # Define column order
+      cols <- c(
+        paste0("SNP_", trait_name),
+        paste0("SNP_", out_name),
+        "Coloc_method",
+        "PPH4",
+        "MR_beta",
+        "MR_pvalue"
+      )
+      
+      temp <- temp %>% select(all_of(cols))}
+    else{
+      temp <- temp %>%
+        left_join(
+          res_mr %>% select(SNP, p, b, se),
+          by = setNames("SNP", paste0("SNP_", trait_name))
+        ) %>% mutate(MR_OR = sprintf("%.2f (%.2f, %.2f)", 
+                                     exp(b), 
+                                     exp(b - 1.96 * se), 
+                                     exp(b + 1.96 * se))) %>%
+        rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
+      
+      # Define column order
+      cols <- c(
+        paste0("SNP_", trait_name),
+        paste0("SNP_", out_name),
+        "Coloc_method",
+        "PPH4",
+        "MR_OR",
+        "MR_pvalue"
+      )
+      
+      temp <- temp %>% select(all_of(cols))}
     
-    # Define column order
-    cols <- c(
-      paste0("SNP_", trait_name),
-      paste0("SNP_", out_name),
-      "Coloc_method",
-      "PPH4",
-      "MR_beta",
-      "MR_pvalue"
-    )
-    
-    temp <- temp %>% select(all_of(cols))
   }
   
   
@@ -1644,7 +1677,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
 #' 5. Arranges plots in publication-ready layout
 #' 
 #' @author M. Breeur
-plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure", out_name = "outcome",
+plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure", out_name = "outcome", out_type = "quant",
                          plink_path = "plink",
                          bfile_path = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
                          temp_dir_path = "Temp") {
@@ -1711,7 +1744,7 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
   
   plot_list$table <- coloc_mr_table(
     trait, out, res_coloc, res_mr, 
-    trait_name, out_name)
+    trait_name, out_name, out_type)
   
   return(ggarrange(ggarrange(plot_list$zzplot, plot_list$table, ncol = 2, widths = c(1, .8)),
                    ggarrange(plot_list$pvalues_at_locus,
