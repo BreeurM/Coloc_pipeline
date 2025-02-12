@@ -629,7 +629,7 @@ get_ld_matrix_1000g <- function(rsid_list, with_alleles = T) {
 #' @export
 get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory = NULL, with_alleles = TRUE, temp_dir_path = NULL) {
   # Determine shell type based on operating system
-  # shell <- ifelse(Sys.info()["sysname"] == "Windows", "cmd", "srun")
+  shell <- ifelse(Sys.info()["sysname"] == "Windows", "cmd", "sh")
   
   # Create a temporary file to store rsID list
   set.temp.dir(temp_dir_path)
@@ -649,11 +649,11 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
   }
   
   # Generate BIM file with PLINK
-  fun1 <- paste("srun",
-                plink_loc, "--bfile", bfile_loc,
-                "--extract", paste0(temp_dir_path,"/extracted_snp"),
-                "--make-just-bim --keep-allele-order --out", paste0(temp_dir_path,"/extracted_snp"),
-                "--memory", plink_memory
+  fun1 <- paste0(
+    shQuote(plink_loc, type = shell), " --bfile ",
+    shQuote(bfile_loc, type = shell), " --extract ", shQuote(fn, type = shell),
+    " --make-just-bim --keep-allele-order --out ", shQuote(fn, type = shell),
+    " --memory ", plink_memory
   )
   system(fun1, ignore.stdout = TRUE, ignore.stderr = TRUE)
   
@@ -661,11 +661,11 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
   bim <- read.table(paste0(fn, ".bim"), stringsAsFactors = FALSE)
   
   # Compute LD matrix with PLINK
-  fun2 <- paste("srun",
-                plink_loc, "--bfile", bfile_loc,
-                "--extract", paste0(temp_dir_path,"/extracted_snp"),
-                "--r square --keep-allele-order --out", paste0(temp_dir_path,"/extracted_snp"),
-                "--memory", plink_memory
+  fun2 <- paste0(
+    shQuote(plink_loc, type = shell), " --bfile ",
+    shQuote(bfile_loc, type = shell), " --extract ", shQuote(fn, type = shell),
+    " --r square --keep-allele-order --out ", shQuote(fn, type = shell),
+    " --memory ", plink_memory
   )
   system(fun2, ignore.stdout = TRUE, ignore.stderr = TRUE)
   
@@ -681,9 +681,6 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
   
   # Clean up temporary files
   cleanup.temp.dir(temp_dir_path)
-  
-  to_exclude <- names(which(colSums(is.na(as.matrix(res))) > 0))
-  res <- res[!rownames(res) %in% to_exclude, !colnames(res) %in% to_exclude]
   
   return(res)
 }
@@ -1231,15 +1228,68 @@ coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name 
   res$idx1 <- res$idx1 - 1
   res$idx2 <- res$idx2 - 1
   
-  res <- res %>% mutate(method = ifelse(idx1 == 0 & idx2 == 0, "vanilla", # coloc between the two non-finemapped signals
-                                        ifelse(idx1 == 0 | idx2 == 0, "hybrid", # coloc between one susie credible set and an original signal
-                                               "susie")))%>% # coloc between susie credible sets
+  res <- res %>% mutate(method = ifelse(idx1 == 0 & idx2 == 0, "Vanilla", # coloc between the two non-finemapped signals
+                                        ifelse(idx1 == 0 | idx2 == 0, "Hybrid", # coloc between one susie credible set and an original signal
+                                               "SuSiE")))%>% # coloc between susie credible sets
     rename_with(~ c(paste0("hit_", str_replace(trait1_name," ", "_") ), 
                     paste0("hit_", str_replace(trait2_name," ", "_"))), 
                 c(hit1, hit2))
-  
   return(res)
 }
+
+
+
+################################################################################
+# MR wrapper
+################################################################################
+
+
+#' Perform Mendelian Randomization (MR) If Traits Are Colocalised
+#'
+#' This function takes colocalisation results and performs Mendelian Randomization (MR) if the two traits are colocalised.
+#' It uses the `TwoSampleMR` package to format and harmonise the data before conducting MR analysis.
+#'
+#' @param trait A data frame containing summary statistics for the exposure trait.
+#' @param out A data frame containing summary statistics for the outcome trait.
+#' @param N_out An integer specifying the sample size for the outcome trait.
+#' @param res_coloc A data frame containing colocalisation results, including a column `PP.H4.abf` for colocalisation probability.
+#' @param trait_name A character string specifying the name of the exposure trait. Default is "exposure".
+#' @param out_name A character string specifying the name of the outcome trait. Default is "outcome".
+#'
+#' @return A data frame containing MR results from `mr_singlesnp`, or `NULL` if no colocalisation is detected.
+#'
+#' @importFrom dplyr filter
+#' @importFrom TwoSampleMR format_data harmonise_data mr_singlesnp
+#' 
+#' @author M. Breeur
+mr.wrapper <- function(trait, out, N_out, res_coloc, trait_name = "exposure", out_name = "outcome") {
+  colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
+  if (colocalised) {
+    trait$pheno <- trait_name
+    trait_mr <- TwoSampleMR::format_data(as.data.frame(trait), phenotype_col = "pheno") %>%
+      filter(pval.exposure < 1e-5)
+    out$pheno <- out_name
+    out_mr <- TwoSampleMR::format_data(as.data.frame(out),
+                                       snps = trait_mr$SNP,
+                                       type = "outcome",
+                                       phenotype_col = "pheno"
+    )
+    out_mr$samplesize.outcome <- N_out
+    
+    harm_dat_mr <- TwoSampleMR::harmonise_data(trait_mr, out_mr)
+    
+    res_mr_single <- mr_singlesnp(harm_dat_mr, all_method = c())
+    
+    res_mr_single <- merge(res_mr_single,
+                           trait %>% dplyr::select(c(SNP, variant)),
+                           on = "SNP")
+  } else {
+    res_mr_single <- NULL
+  }
+  
+  return(res_mr_single)
+}
+
 
 
 
@@ -1327,15 +1377,16 @@ zz_plot <- function(LD_Mat, lead_SNP, Harm_dat, coloc_SNP = NULL,
     ylab(paste(out_name, " Z-score", sep = "")) +
     ggtitle(paste("Z-Z Locus Plot ", exp_name, " VS ", out_name, sep = "")) +
     theme(
-      axis.text = element_text(hjust = 1, size = 15),
-      plot.title = element_text(hjust = 0.5, size = 22),
-      axis.title = element_text(size = 15),
-      legend.text = element_text(size = 15),
-      legend.title = element_text(size = 15, face = "bold")
+      axis.text = element_text(hjust = 1, size = 10),
+      plot.title = element_text(hjust = 0.5, size = 15),
+      axis.title = element_text(size = 10),
+      legend.text = element_text(size = 10),
+      legend.title = element_text(size = 10, face = "bold"),
+      legend.position="top"
     ) +
     # Add labels to the lead SNP and coloc SNP
     geom_label_repel(
-      size = 6,
+      size = 5,
       data = temp_dat_format %>% filter(SNP %in% c(lead_SNP, coloc_SNP)),
       aes(label = SNP), show.legend = FALSE
     ) +
@@ -1422,6 +1473,14 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
     theme_minimal() +
     ggtitle(paste0("P-values ", exp_name, " vs ", out_name)) +
     scale_color_manual(values = ld_colors, guide = "none") +
+    theme(
+      axis.text = element_text(hjust = 1, size = 10),
+      plot.title = element_text(hjust = 0.5, size = 15),
+      axis.title = element_text(size = 10),
+      legend.text = element_text(size = 10),
+      legend.title = element_text(size = 10, face = "bold"),
+      legend.position="none"
+    )+
     geom_label_repel(data = harm_dat %>% filter(SNP %in% c(lead_SNP, coloc_SNP)), aes(label = SNP), size = 5, show.legend = FALSE)
   
   # Generate Manhattan plots for exposure and outcome
@@ -1441,6 +1500,106 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
   
   # Return a list of plots
   return(list(pvalues_at_locus = p_p_plot, outcome_at_locus = locus_out, exposure_at_locus = locus_exp))
+}
+
+
+#' Generate a Colocalization and Mendelian Randomization Summary Table
+#'
+#' This function creates a summary table of colocalization and Mendelian Randomization (MR) results,
+#' filtering colocalization results where the posterior probability (PP.H4.abf) exceeds 0.5.
+#'
+#' @param trait A data frame containing SNP-variant mappings for the exposure trait.
+#' @param out A data frame containing SNP-variant mappings for the outcome trait.
+#' @param res_coloc A data frame containing colocalization results, including `PP.H4.abf` and `method`.
+#' @param res_mr A data frame containing Mendelian Randomization results, including `SNP` and `p` values.
+#' @param trait_name A character string specifying the name of the exposure trait (default: "exposure").
+#' @param out_name A character string specifying the name of the outcome trait (default: "outcome").
+#'
+#' @return A `ggtexttable` summary table displaying SNP associations with colocalization and MR results.
+#' If no colocalization result passes the threshold, a message table is returned.
+#' 
+#' @import dplyr ggpubr stringr
+#' @author M.Breeur
+coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure", out_name = "outcome") {
+  
+  # Filter colocalization results where PP.H4.abf > 0.5 and select relevant columns
+  temp <- res_coloc %>%
+    filter(PP.H4.abf > 0.5) %>%
+    select(
+      !!sym(paste0("hit_", str_replace_all(trait_name, " ", "_"))), 
+      !!sym(paste0("hit_", str_replace_all(out_name, " ", "_"))), 
+      PP.H4.abf, method
+    ) %>%
+    distinct() %>%
+    rename(
+      Coloc_method = method,
+      PPH4 = PP.H4.abf
+    )
+  
+  # Join with trait SNP data
+  temp <- temp %>%
+    left_join(
+      trait %>% select(SNP, variant), 
+      by = setNames("variant", paste0("hit_", trait_name))
+    ) %>%
+    rename(!!sym(paste0("SNP_", trait_name)) := SNP)
+  
+  # Join with outcome SNP data
+  temp <- temp %>%
+    left_join(
+      out %>% select(SNP, variant), 
+      by = setNames("variant", paste0("hit_", out_name))
+    ) %>%
+    rename(!!sym(paste0("SNP_", out_name)) := SNP)
+  
+  # Remove original hit columns
+  temp <- temp %>%
+    select(-all_of(c(
+      paste0("hit_", str_replace_all(trait_name, " ", "_")), 
+      paste0("hit_", str_replace_all(out_name, " ", "_"))
+    )))
+  
+  # Add MR results if colocalization data exists
+  if (nrow(temp) > 0){
+    temp <- temp %>%
+      left_join(
+        res_mr %>% select(SNP, p, b, se),
+        by = setNames("SNP", paste0("SNP_", trait_name))
+      ) %>% mutate(MR_beta = sprintf("%.2f (%.2f, %.2f)", 
+                                     b, 
+                                     b - 1.96 * se, 
+                                     b + 1.96 * se)) %>%
+      rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
+    
+    # Define column order
+    cols <- c(
+      paste0("SNP_", trait_name),
+      paste0("SNP_", out_name),
+      "Coloc_method",
+      "PPH4",
+      "MR_beta",
+      "MR_pvalue"
+    )
+    
+    temp <- temp %>% select(all_of(cols))
+  }
+  
+  
+  # Generate table output
+  if (nrow(temp) > 0) {
+    table <- ggtexttable(temp, rows = NULL, theme = ttheme("blank")) %>%
+      tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 2) %>%
+      tab_add_hline(at.row = nrow(temp) + 1, row.side = "bottom", linewidth = 2)
+  } else {
+    table <- ggtexttable(
+      c("No colocalisation method crossed the 0.5 threshold"),
+      theme = ttheme("blank")
+    ) %>%
+      tab_add_hline(at.row = 1, row.side = "top", linewidth = 2) %>%
+      tab_add_hline(at.row = 1, row.side = "bottom", linewidth = 2)
+  }
+  
+  return(table)
 }
 
 
@@ -1485,7 +1644,7 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
 #' 5. Arranges plots in publication-ready layout
 #' 
 #' @author M. Breeur
-plot.wrapper <- function(trait, out, res_coloc, trait_name = "exposure", out_name = "outcome",
+plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure", out_name = "outcome",
                          plink_path = "plink",
                          bfile_path = "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered",
                          temp_dir_path = "Temp") {
@@ -1550,65 +1709,17 @@ plot.wrapper <- function(trait, out, res_coloc, trait_name = "exposure", out_nam
     out_name = out_name
   )
   
-  return(ggarrange(plot_list$zzplot,
+  plot_list$table <- coloc_mr_table(
+    trait, out, res_coloc, res_mr, 
+    trait_name, out_name)
+  
+  return(ggarrange(ggarrange(plot_list$zzplot, plot_list$table, ncol = 2, widths = c(1, .8)),
                    ggarrange(plot_list$pvalues_at_locus,
                              ggarrange(plot_list$exposure_at_locus,
                                        plot_list$outcome_at_locus,
-                                       nrow = 2
-                             ),
-                             ncol = 2, widths = c(1, .8)
-                   ),
-                   nrow = 2
-  ))
-}
-
-
-
-################################################################################
-# MR wrapper
-################################################################################
-
-
-#' Perform Mendelian Randomization (MR) If Traits Are Colocalised
-#'
-#' This function takes colocalisation results and performs Mendelian Randomization (MR) if the two traits are colocalised.
-#' It uses the `TwoSampleMR` package to format and harmonise the data before conducting MR analysis.
-#'
-#' @param trait A data frame containing summary statistics for the exposure trait.
-#' @param out A data frame containing summary statistics for the outcome trait.
-#' @param N_out An integer specifying the sample size for the outcome trait.
-#' @param res_coloc A data frame containing colocalisation results, including a column `PP.H4.abf` for colocalisation probability.
-#' @param trait_name A character string specifying the name of the exposure trait. Default is "exposure".
-#' @param out_name A character string specifying the name of the outcome trait. Default is "outcome".
-#'
-#' @return A data frame containing MR results from `mr_singlesnp`, or `NULL` if no colocalisation is detected.
-#'
-#' @importFrom dplyr filter
-#' @importFrom TwoSampleMR format_data harmonise_data mr_singlesnp
-#' 
-#' @author M. Breeur
-mr.wrapper <- function(trait, out, N_out, res_coloc, trait_name = "exposure", out_name = "outcome") {
-  colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
-  if (colocalised) {
-    trait$pheno <- trait_name
-    trait_mr <- TwoSampleMR::format_data(as.data.frame(trait), phenotype_col = "pheno") %>%
-      filter(pval.exposure < 1e-5)
-    out$pheno <- out_name
-    out_mr <- TwoSampleMR::format_data(as.data.frame(out),
-                                       snps = trait_mr$SNP,
-                                       type = "outcome",
-                                       phenotype_col = "pheno"
-    )
-    out_mr$samplesize.outcome <- N_out
-    
-    harm_dat_mr <- TwoSampleMR::harmonise_data(trait_mr, out_mr)
-    
-    res_mr_single <- mr_singlesnp(harm_dat_mr, all_method = c())
-  } else {
-    res_mr_single <- NULL
-  }
+                                       nrow = 2),
+                             ncol = 2, widths = c(1, .8)),
+                   nrow = 2))
   
-  return(res_mr_single)
+  return(plot_list)
 }
-
-
