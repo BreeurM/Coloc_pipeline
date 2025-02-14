@@ -1540,7 +1540,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
       PP.H4.abf, method
     ) %>%
     distinct() %>%
-    rename(
+    dplyr::rename(
       Coloc_method = method,
       PPH4 = PP.H4.abf
     )
@@ -1719,7 +1719,7 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
   if (colocalised) {
     # coloc_snp = hit in hit_out_name
     vars <- as.data.frame(res_coloc) %>% dplyr::select(!!sym(paste0("hit_", str_replace(out_name," ","_"))))
-    coloc_snp <- out$SNP[out$variant == vars[which.max(res_coloc$PP.H4.abf)]]
+    coloc_snp <- out$SNP[out$variant == vars[which.max(res_coloc$PP.H4.abf),1]]
   } else {
     coloc_snp <- NULL
   }

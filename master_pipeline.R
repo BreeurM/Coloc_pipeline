@@ -21,7 +21,7 @@ source("~/Code/Coloc_pipeline/scripts/pipeline_utils.R")
 
 # Trait paths
 
-trait_id            <- "ENSG00000035115"
+trait_id            <- "ENSG00000272240"
 trait_lbf_path      <- "data/eQTL_catalogue/QTD000261.lbf_variable.txt.gz"
 trait_sumstats_path <- "data/eQTL_catalogue/QTD000261.cc.tsv.gz"
 
@@ -32,6 +32,7 @@ out_lbf_dir_path    <- "data/renal_cancer_lbf"
 N_out               <- 780000
 out_type            <- "cc"
 out_sd              <- 0.034
+out_id <- "RnC"
 
 # Utility paths
 
@@ -86,7 +87,30 @@ out <- finemap.wrapper(out, out_lbf_dir_path, N_out, out_type, out_sd,trait)
 ################################################################################
 
 
-res_coloc <- coloc.wrapper(out, trait)
+res_coloc <- res_coloc <- coloc.wrapper(trait, out, trait_id, out_id)
+
+################################################################################
+# Investigate causality with MR
+################################################################################
+
+
+res_mr <- mr.wrapper(trait, out, N_out, res_coloc, trait_id, out_id)
+
+
+################################################################################
+# Store the results
+################################################################################
+
+
+res <- list(trait = trait,
+            out = out, 
+            coloc = res_coloc,
+            mr = res_mr)
+
+resfile <- paste0(args$respath, "/fullres_", 
+                  str_replace(args$trait_id, " ", "_"), "_", 
+                  str_replace(args$out_id, " ", "_"), ".rds")
+saveRDS(res, resfile)
 
 
 ################################################################################
@@ -94,15 +118,15 @@ res_coloc <- coloc.wrapper(out, trait)
 ################################################################################
 
 
-plot_list <- plot.wrapper(trait, out, res_coloc)
+plots <- plot.wrapper(trait, out, res_coloc, res_mr, trait_id, out_id, out_type)
+
+plotfile <- paste0(args$respath, "/plots_", 
+                   str_replace(args$trait_id, " ", "_"), "_", 
+                   str_replace(args$out_id, " ", "_"), ".pdf")
+ggsave(plotfile, plots, dpi = 300, width = 15, height = 10)
 
 
-################################################################################
-# Investigate causality with MR
-################################################################################
 
-
-res_mr <- mr.wrapper(trait, out, N_out, res_coloc)
 
 
 
