@@ -1551,7 +1551,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
       trait %>% select(SNP, variant), 
       by = setNames("variant", paste0("hit_", trait_name))
     ) %>%
-    rename(!!sym(paste0("SNP_", trait_name)) := SNP)
+    dplyr::rename(!!sym(paste0("SNP_", trait_name)) := SNP)
   
   # Join with outcome SNP data
   temp <- temp %>%
@@ -1559,7 +1559,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
       out %>% select(SNP, variant), 
       by = setNames("variant", paste0("hit_", out_name))
     ) %>%
-    rename(!!sym(paste0("SNP_", out_name)) := SNP)
+    dplyr::rename(!!sym(paste0("SNP_", out_name)) := SNP)
   
   # Remove original hit columns
   temp <- temp %>%
@@ -1579,7 +1579,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
                                        b, 
                                        b - 1.96 * se, 
                                        b + 1.96 * se)) %>%
-        rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
+        dplyr::rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
       
       # Define column order
       cols <- c(
@@ -1591,7 +1591,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
         "MR_pvalue"
       )
       
-      temp <- temp %>% select(all_of(cols))}
+      temp <- temp %>% select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
     else{
       temp <- temp %>%
         left_join(
@@ -1613,7 +1613,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
         "MR_pvalue"
       )
       
-      temp <- temp %>% select(all_of(cols))}
+      temp <- temp %>% select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
     
   }
   
@@ -1634,6 +1634,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
   
   return(table)
 }
+
 
 
 #' Generate Combined Z-Z Plot and Locus Plots for Trait Comparison
