@@ -115,7 +115,18 @@ if (region_utils$is_pos_covered) {
   message("Loading outcome summary stats.")
 
   out_raw <- fread(path_to_out)
-  # plot_can <- manhattan(out_raw %>% filter(p_value < 1e-5), chr = "chromosome", bp = "base_pair_location", snp = "rsid", p = "p_value")
+  # out_man <- out_raw %>% filter(p_value < 1e-5)
+  # snps <- out_man %>% filter(((chromosome == "1")& between(base_pair_location, 156213007, 156240042))|
+  #                              ((chromosome == "1")& between(base_pair_location, 155050566,155062775))|
+  #                              ((chromosome == "2")& between(base_pair_location, 8559833,8583792))|
+  #                              ((chromosome == "2")& between(base_pair_location, 127638426,127681786))|
+  #                              ((chromosome == "2")& between(base_pair_location, 201116164,201176687))|
+  #                              ((chromosome == "7")& between(base_pair_location, 128937032,128950038))|
+  #                              ((chromosome == "16")& between(base_pair_location, 28822999,28837232))|
+  #                              ((chromosome == "16")& between(base_pair_location, 79721312,79770532))|
+  #                              ((chromosome == "22")& between(base_pair_location, 37807934,37817183))) %>% 
+  #   select(rsid)
+  # plot_can <- manhattan(out_man, chr = "chromosome", bp = "base_pair_location", snp = "rsid", p = "p_value", highlight = c(snps$rsid))
 
   # can_lead_var <- out_raw[which.min(out_raw$p_value), variant_id]
   # # [1] "11_69422827_C_T"
