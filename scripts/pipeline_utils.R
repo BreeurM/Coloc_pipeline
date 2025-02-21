@@ -64,6 +64,8 @@ cleanup.temp.dir <- function(path) {
   }
 }
 
+
+
 ################################################################################
 # Data formatting
 ################################################################################
@@ -396,7 +398,7 @@ get_genome_build_local <- function(data, sampled_snps = 500, path_to_38,
   return(ref_genome)
 }
 
-
+                                     
 
 
 #' Lift genomic coordinates from hg19 to hg38 using chain file
@@ -634,10 +636,9 @@ get_ld_matrix_1000g <- function(rsid_list, with_alleles = T) {
 #' @importFrom stats as.matrix
 #' @author K. Smith-Byrne, M. Breeur
 #' @export
-get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory = NULL, with_alleles = TRUE, temp_dir_path = NULL) {
+get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory = 12000, with_alleles = TRUE, temp_dir_path = NULL) {
   # Determine shell type based on operating system
-  shell <- ifelse(Sys.info()["sysname"] == "Windows", "cmd", "sh")
-  
+  # shell <- ifelse(Sys.info()["sysname"] == "Windows", "cmd", "srun")
   # Create a temporary file to store rsID list
   set.temp.dir(temp_dir_path)
   fn <- temp.file("extracted_snp", temp_dir_path)
@@ -656,11 +657,11 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
   }
   
   # Generate BIM file with PLINK
-  fun1 <- paste0(
-    shQuote(plink_loc, type = shell), " --bfile ",
-    shQuote(bfile_loc, type = shell), " --extract ", shQuote(fn, type = shell),
-    " --make-just-bim --keep-allele-order --out ", shQuote(fn, type = shell),
-    " --memory ", plink_memory
+  fun1 <- paste("srun -p short",
+    plink_loc, "--bfile", bfile_loc,
+    "--extract", paste0(temp_dir_path,"/extracted_snp"),
+    "--make-just-bim --keep-allele-order --out", paste0(temp_dir_path,"/extracted_snp"),
+    "--memory", plink_memory
   )
   system(fun1, ignore.stdout = TRUE, ignore.stderr = TRUE)
   
@@ -668,11 +669,11 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
   bim <- read.table(paste0(fn, ".bim"), stringsAsFactors = FALSE)
   
   # Compute LD matrix with PLINK
-  fun2 <- paste0(
-    shQuote(plink_loc, type = shell), " --bfile ",
-    shQuote(bfile_loc, type = shell), " --extract ", shQuote(fn, type = shell),
-    " --r square --keep-allele-order --out ", shQuote(fn, type = shell),
-    " --memory ", plink_memory
+  fun2 <- paste("srun -p short",
+         plink_loc, "--bfile", bfile_loc,
+         "--extract", paste0(temp_dir_path,"/extracted_snp"),
+         "--r square --keep-allele-order --out", paste0(temp_dir_path,"/extracted_snp"),
+         "--memory", plink_memory
   )
   system(fun2, ignore.stdout = TRUE, ignore.stderr = TRUE)
   
@@ -688,6 +689,9 @@ get_ld_matrix_from_bim <- function(rsid_list, plink_loc, bfile_loc, plink_memory
   
   # Clean up temporary files
   cleanup.temp.dir(temp_dir_path)
+  
+  to_exclude <- names(which(colSums(is.na(as.matrix(res))) > 0))
+  res <- res[!rownames(res) %in% to_exclude, !colnames(res) %in% to_exclude]
   
   return(res)
 }
@@ -1018,7 +1022,7 @@ region_utils <- function(region, lead_pos, lbf_directory) {
       pos_low = pos_low
     ),
     is_pos_covered = nrow(position_covered) > 0,
-    existing_coverage = position_covered
+    existing_coverage = position_covered[1,]
   ))
 }
 
@@ -1092,6 +1096,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
         as.character(min(trait$pos)), "-",
         as.character(max(trait$pos))
       )
+      print(region)
       region_utils <- region_utils(region, lead_pos, out_lbf_dir_path)
     } else {
       lead_pos <- out %>%
@@ -1105,7 +1110,6 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
       )
       region_utils <- region_utils(region, lead_pos, out_lbf_dir_path)
     }
-    
     
     if (region_utils$is_pos_covered) {
       message(paste0("Region already fine-mapped. Loading the BFs from ", out_lbf_dir_path))
@@ -1579,7 +1583,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
                                        b, 
                                        b - 1.96 * se, 
                                        b + 1.96 * se)) %>%
-        dplyr::rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
+        dplyr::mutate(MR_log10p = -log10(p)) %>% dplyr::select(-c(b, se))
       
       # Define column order
       cols <- c(
@@ -1588,10 +1592,10 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
         "Coloc_method",
         "PPH4",
         "MR_beta",
-        "MR_pvalue"
+        "MR_log10p"
       )
       
-      temp <- temp %>% select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
+      temp <- temp %>% dplyr::select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
     else{
       temp <- temp %>%
         left_join(
@@ -1601,7 +1605,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
                                      exp(b), 
                                      exp(b - 1.96 * se), 
                                      exp(b + 1.96 * se))) %>%
-        rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
+        dplyr::mutate(MR_log10p = -log10(p)) %>% dplyr::select(-c(b, se))
       
       # Define column order
       cols <- c(
@@ -1610,17 +1614,18 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
         "Coloc_method",
         "PPH4",
         "MR_OR",
-        "MR_pvalue"
+        "MR_log10p"
       )
       
-      temp <- temp %>% select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
+      temp <- temp %>% dplyr::select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
     
   }
   
   
   # Generate table output
   if (nrow(temp) > 0) {
-    table <- ggtexttable(temp, rows = NULL, theme = ttheme("blank")) %>%
+    table <- ggtexttable(temp, rows = NULL, theme = ttheme(base_style = "blank",
+                                                           base_size = 8)) %>%
       tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 2) %>%
       tab_add_hline(at.row = nrow(temp) + 1, row.side = "bottom", linewidth = 2)
   } else {
@@ -1634,7 +1639,6 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
   
   return(table)
 }
-
 
 
 #' Generate Combined Z-Z Plot and Locus Plots for Trait Comparison
