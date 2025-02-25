@@ -1,8 +1,5 @@
 results/
-data/renal_cancer_lbf
-data/PrC_coloc
-data/hg19ToHg38.over.chain
-data/hg38_rsid_map_file.txt
+data/
 .Rhistory
 .RData
 plink.exe
