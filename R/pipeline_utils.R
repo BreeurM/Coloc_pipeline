@@ -1233,8 +1233,7 @@ coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name 
   column_order <- order(numbers)
   trait2_mat_ordered <- t(trait2_mat[, column_order])
   
-  res <- coloc::coloc.bf_bf(trait2_mat_ordered, trait1_mat_ordered)$summary
-  # inverting 1 and 2 because coloc_bf_bf takes entry 1 as hit2 and vice versa
+  res <- coloc::coloc.bf_bf(trait1_mat_ordered, trait2_mat_ordered)$summary
   
   res$idx1 <- res$idx1 - 1
   res$idx2 <- res$idx2 - 1
@@ -1242,9 +1241,12 @@ coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name 
   res <- res %>% mutate(method = ifelse(idx1 == 0 & idx2 == 0, "Vanilla", # coloc between the two non-finemapped signals
                                         ifelse(idx1 == 0 | idx2 == 0, "Hybrid", # coloc between one susie credible set and an original signal
                                                "SuSiE")))%>% # coloc between susie credible sets
-    rename_with(~ c(paste0("hit_", str_replace(trait1_name," ", "_") ), 
-                    paste0("hit_", str_replace(trait2_name," ", "_"))), 
-                c(hit1, hit2))
+    rename_with(~ c(paste0("hit_", str_replace(trait1_name," ", "_") ),
+                    paste0("hit_", str_replace(trait2_name," ", "_"))),
+                c(hit1, hit2)) %>%
+    rename_with(~ c(paste0("idx_", str_replace(trait1_name," ", "_") ),
+                    paste0("idx_", str_replace(trait2_name," ", "_"))),
+                c(idx1, idx2))
   
   return(res)
 }
@@ -1722,6 +1724,9 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
   # Highlight coloc_snp if colocalised
   colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
   if (colocalised) {
+    # Update lead_snp with the one corresponding with the actual signal 
+    vars_trait <- as.data.frame(res_coloc) %>% dplyr::select(!!sym(paste0("hit_", str_replace(trait_name," ","_"))))
+    lead_snp <- trait$SNP[trait$variant == vars_trait[which.max(res_coloc$PP.H4.abf),1]]
     # coloc_snp = hit in hit_out_name
     vars <- as.data.frame(res_coloc) %>% dplyr::select(!!sym(paste0("hit_", str_replace(out_name," ","_"))))
     coloc_snp <- out$SNP[out$variant == vars[which.max(res_coloc$PP.H4.abf),1]]
