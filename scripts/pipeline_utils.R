@@ -1229,18 +1229,20 @@ coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name 
   column_order <- order(numbers)
   trait2_mat_ordered <- t(trait2_mat[, column_order])
   
-  res <- coloc::coloc.bf_bf(trait2_mat_ordered, trait1_mat_ordered)$summary
-  # inverting 1 and 2 because coloc_bf_bf takes entry 1 as hit2 and vice versa
-  
+  res <- coloc::coloc.bf_bf(trait1_mat_ordered, trait2_mat_ordered)$summary
+
   res$idx1 <- res$idx1 - 1
   res$idx2 <- res$idx2 - 1
-  
+
   res <- res %>% mutate(method = ifelse(idx1 == 0 & idx2 == 0, "Vanilla", # coloc between the two non-finemapped signals
                                         ifelse(idx1 == 0 | idx2 == 0, "Hybrid", # coloc between one susie credible set and an original signal
                                                "SuSiE")))%>% # coloc between susie credible sets
-    rename_with(~ c(paste0("hit_", str_replace(trait1_name," ", "_") ), 
-                    paste0("hit_", str_replace(trait2_name," ", "_"))), 
-                c(hit1, hit2))
+    rename_with(~ c(paste0("hit_", str_replace(trait1_name," ", "_") ),
+                    paste0("hit_", str_replace(trait2_name," ", "_"))),
+                c(hit1, hit2)) %>%
+    rename_with(~ c(paste0("idx_", str_replace(trait1_name," ", "_") ),
+                    paste0("idx_", str_replace(trait2_name," ", "_"))),
+                c(idx1, idx2))
   
   return(res)
 }
@@ -1276,7 +1278,7 @@ mr.wrapper <- function(trait, out, N_out, res_coloc, trait_name = "exposure", ou
   if (colocalised) {
     trait$pheno <- trait_name
     trait_mr <- TwoSampleMR::format_data(as.data.frame(trait), phenotype_col = "pheno") %>%
-      filter(pval.exposure < 1e-5)
+      filter(pval.exposure < 1e-3)
     out$pheno <- out_name
     out_mr <- TwoSampleMR::format_data(as.data.frame(out),
                                        snps = trait_mr$SNP,
@@ -1503,12 +1505,13 @@ locus_plot <- function(LD_Mat, harm_dat, lead_SNP, coloc_SNP = NULL, exp_name = 
       geom_label_repel(data = harm_dat %>% filter(SNP %in% c(lead_SNP, coloc_SNP)), aes(label = SNP), size = 3, show.legend = FALSE)
   }
   
-  locus_out <- locus_plot_generator("log10p.exp", exp_name, "Locus Manhattan plot for ")
-  locus_exp <- locus_plot_generator("log10p.out", out_name, "Locus Manhattan plot for ")
+  locus_exp <- locus_plot_generator("log10p.exp", exp_name, "Locus Manhattan plot for ")
+  locus_out <- locus_plot_generator("log10p.out", out_name, "Locus Manhattan plot for ")
   
   # Return a list of plots
   return(list(pvalues_at_locus = p_p_plot, outcome_at_locus = locus_out, exposure_at_locus = locus_exp))
 }
+
 
 
 
@@ -1579,7 +1582,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
                                        b, 
                                        b - 1.96 * se, 
                                        b + 1.96 * se)) %>%
-        dplyr::rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
+        dplyr::mutate(MR_log10p = -log10(p)) %>% dplyr::select(-c(b, se))
       
       # Define column order
       cols <- c(
@@ -1588,10 +1591,10 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
         "Coloc_method",
         "PPH4",
         "MR_beta",
-        "MR_pvalue"
+        "MR_log10p"
       )
       
-      temp <- temp %>% select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
+      temp <- temp %>% dplyr::select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
     else{
       temp <- temp %>%
         left_join(
@@ -1601,7 +1604,7 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
                                      exp(b), 
                                      exp(b - 1.96 * se), 
                                      exp(b + 1.96 * se))) %>%
-        rename(MR_pvalue = p) %>% dplyr::select(-c(b, se))
+        dplyr::mutate(MR_log10p = -log10(p)) %>% dplyr::select(-c(b, se))
       
       # Define column order
       cols <- c(
@@ -1610,17 +1613,18 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
         "Coloc_method",
         "PPH4",
         "MR_OR",
-        "MR_pvalue"
+        "MR_log10p"
       )
       
-      temp <- temp %>% select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
+      temp <- temp %>% dplyr::select(all_of(cols))%>% mutate_if(is.numeric, round, 2)}
     
   }
   
   
   # Generate table output
   if (nrow(temp) > 0) {
-    table <- ggtexttable(temp, rows = NULL, theme = ttheme("blank")) %>%
+    table <- ggtexttable(temp, rows = NULL, theme = ttheme(base_style = "blank",
+                                                           base_size = 8)) %>%
       tab_add_hline(at.row = 1:2, row.side = "top", linewidth = 2) %>%
       tab_add_hline(at.row = nrow(temp) + 1, row.side = "bottom", linewidth = 2)
   } else {
@@ -1634,7 +1638,6 @@ coloc_mr_table <- function(trait, out, res_coloc, res_mr, trait_name = "exposure
   
   return(table)
 }
-
 
 
 #' Generate Combined Z-Z Plot and Locus Plots for Trait Comparison
@@ -1685,11 +1688,10 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
   # Define plot window
   lead_pos <- trait %>%
     filter(abs(z) == max(abs(z), na.rm = TRUE)) %>%
-    pull(pos) %>%
-    mean()
+    pull(pos)
   
-  required_start <- lead_pos - 500000
-  required_end <- lead_pos + 500000
+  required_start <- min(lead_pos) - 500000
+  required_end <- max(lead_pos) + 500000
   
   # Extract LD matrix
   SNP_list <- trait$SNP[between(trait$pos, required_start, required_end)]
@@ -1701,10 +1703,6 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
                                       temp_dir_path = temp_dir_path
   )
   
-  ## Extract lead snp from trait
-  
-  lead_snp <- unique(trait$SNP[which.min(abs(trait$pos - lead_pos))])
-  
   ## Flip z scores if needed, according to LD_mat
   
   harm_dat <- merge(
@@ -1713,11 +1711,16 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
     by = c("variant", "SNP")
   )
   
+  lead_snp <- unique(harm_dat$SNP[which.max(abs(harm_dat$z.x))])
+  
   ## Make locus and zz plots, store them in list
   
   # Highlight coloc_snp if colocalised
   colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
   if (colocalised) {
+    # Update lead_snp with the one corresponding with the actual signal 
+    vars_trait <- as.data.frame(res_coloc) %>% dplyr::select(!!sym(paste0("hit_", str_replace(trait_name," ","_"))))
+    lead_snp <- trait$SNP[trait$variant == vars_trait[which.max(res_coloc$PP.H4.abf),1]]
     # coloc_snp = hit in hit_out_name
     vars <- as.data.frame(res_coloc) %>% dplyr::select(!!sym(paste0("hit_", str_replace(out_name," ","_"))))
     coloc_snp <- out$SNP[out$variant == vars[which.max(res_coloc$PP.H4.abf),1]]

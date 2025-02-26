@@ -5,6 +5,7 @@ format_data:
 get_genome_build/lift_coordinates:
   - merging gets rid of the NA rsID
   - chromosome X not in the ref file
+  => Run with ENSG00000130150.grp_2.contained.ENST00000461777 to see what bugs out
 	
 finemap_wrapper
   - case where less than 10 cs is not accounted for?
