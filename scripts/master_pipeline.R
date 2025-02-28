@@ -19,10 +19,6 @@ library(susieR)
 library(TwoSampleMR)
 
 
-setwd("~/Code/Coloc_pipeline")
-source("~/Code/Coloc_pipeline/scripts/pipeline_utils.R")
-
-
 ################################################################################
 # Set parameters and paths
 ################################################################################
@@ -30,11 +26,12 @@ source("~/Code/Coloc_pipeline/scripts/pipeline_utils.R")
 
 # Main arguments ---------------------------------------------------------------
 
-workdir <- "~/Coloc_pipeline"
+workdir <- "~/Code/Coloc_pipeline"
+path_to_utils <- "scripts/pipeline_utils.R"
 plink_path <- "plink"
 bfile_path <- "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered"
-chain_path <- "data/hg19ToHg38.over.chain"
-rsid38_path <- "data/hg38_rsid_map_file.txt"
+chain_path <- "data/gen_utils/hg19ToHg38.over.chain"
+rsid38_path <- "data/gen_utils/hg38_rsid_map_file.txt"
 temp_dir_path <- "Temp"
 respath <- "results"
 
@@ -48,43 +45,45 @@ N_trait <- 35000
 trait_type <- "quant"
 trait_sd <- 1
 # Trait column mappings
-trait_chr_col <- "chr" # Trait chromosome column name
-trait_pos_col <- "pos" # Trait position column name
-trait_snp_col <- "SNP" # Trait SNP ID column name
-trait_beta_col <- "beta" # Trait beta column name
-trait_se_col <- "se" # Trait standard error column name
-trait_pval_col <- "pval" # Trait p-value column name
-trait_log_pval <- FALSE # Trait p-values are log-transformed (TRUE/FALSE)
-trait_eaf_col <- "eaf" # Trait effect allele frequency column name
-trait_effect_allele_col <- "effect_allele" # Trait effect allele column name
-trait_other_allele_col <- "other_allele" # Trait other allele column name
+trait_chr_col <- "CHROM" # Trait chromosome column name
+trait_pos_col <- "GENPOS" # Trait position column name
+trait_snp_col <- "RSID" # Trait SNP ID column name
+trait_beta_col <- "BETA" # Trait beta column name
+trait_se_col <- "SE" # Trait standard error column name
+trait_pval_col <- "LOG10P" # Trait p-value column name
+trait_log_pval <- TRUE # Trait p-values are log-transformed (TRUE/FALSE)
+trait_eaf_col <- "A1FREQ" # Trait effect allele frequency column name
+trait_effect_allele_col <- "ALLELE1" # Trait effect allele column name
+trait_other_allele_col <- "ALLELE0" # Trait other allele column name
 
 # Outcome parameters -----------------------------------------------------------
 
 out_id <- "Prostate_cancer"
 out_sumstats_path <- "data/PrC_coloc/ELLIPSE_V2_META_EUROPEAN_Results_012121.txt"
 out_lbf_path <- "data/PrC_coloc/prostate_cancer_lbf"
-out_build <- 38 # or 37, or NA
+out_build <- 37 # or 38, or NA
 N_out <- 178000
 out_type <- "cc"
 out_sd <- 0.48
 # Outcome column mappings
-out_chr_col <- "chr" # Out chromosome column name
-out_pos_col <- "pos" # Out position column name
-out_snp_col <- "SNP" # Out SNP ID column name
-out_beta_col <- "beta" # Out beta column name
-out_se_col <- "se" # Out standard error column name
-out_pval_col <- "pval" # Out p-value column name
+out_chr_col <- "Chromosome" # Out chromosome column name
+out_pos_col <- "Position" # Out position column name
+out_snp_col <- "SNP_Id" # Out SNP ID column name
+out_beta_col <- "Estimate_Effect" # Out beta column name
+out_se_col <- "SE" # Out standard error column name
+out_pval_col <- "P_value" # Out p-value column name
 out_log_pval <- FALSE # Out p-values are log-transformed (TRUE/FALSE)
-out_eaf_col <- "eaf" # Out effect allele frequency column name
-out_effect_allele_col <- "effect_allele" # Out effect allele column name
-out_other_allele_col <- "other_allele" # Out other allele column name
+out_eaf_col <- "EAF_Control" # Out effect allele frequency column name
+out_effect_allele_col <- "Allele_1" # Out effect allele column name
+out_other_allele_col <- "Allele_2" # Out other allele column name
 
 
 ################################################################################
 # Check parameter integrity and create folders if needed
 ################################################################################
 
+setwd(workdir)
+source(path_to_utils)
 
 if (!file.exists(rsid38_path) & (is.na(trait_build) | is.na(out_build))) {
   warning("No hg38 reference, cannot check genome builds.
@@ -166,6 +165,7 @@ trait <- finemap.wrapper(
 cat("Trait processed.\n")
 cat("\n")
 
+
 ################################################################################
 # Process outcome data
 ################################################################################
@@ -179,7 +179,7 @@ out_raw <- fread(out_sumstats_path)
 
 
 if (is.na(out_build)) {
-  out_raw <- out_raw %>%
+  out <- out_raw %>%
     filter(!!sym(out_chr_col) == unique(trait$chr))
   build <- get_genome_build_local(out,
     sampled_snps = 100, path_to_38 = rsid38_path,
@@ -191,17 +191,24 @@ if (is.na(out_build)) {
 }
 
 if (out_build == 37) {
+  out <- out_raw %>%
+    filter(!!sym(out_chr_col) == unique(trait$chr))
+  
   out <- lift_coordinates(out, chain_path,
     snp_col = out_snp_col,
     chr_col = out_chr_col,
     pos_col = out_pos_col
   )
   cat("Outcome lifted to hg38.\n")
-}
+  
+  out <- out %>% filter(between(!!sym(out_pos_col), min(trait$pos), max(trait$pos)))
+  
+}else{
+  out <- out_raw %>% filter((!!sym(out_chr_col) == unique(trait$chr)) & 
+                                  (between(!!sym(out_pos_col), min(trait$pos), max(trait$pos))))
+  }
 
 
-out <- out_raw %>% filter((!!sym(out_chr_col) == unique(trait$chr)) & 
-                            (between(!!sym(out_pos_col), min(trait$pos), max(trait$pos))))
 rm(out_raw)
 
 out <- format_data(data.frame(out),
@@ -218,7 +225,7 @@ out <- format_data(data.frame(out),
 )
 
 
-out <- finemap.wrapper(out, out_lbf_dir_path, N_out, out_type, out_sd, trait,
+out <- finemap.wrapper(out, out_lbf_path, N_out, out_type, out_sd, trait,
   plink_path = plink_path,
   bfile_path = bfile_path,
   temp_dir_path = temp_dir_path
