@@ -17,8 +17,8 @@ echo "------------------------------------------------"
 
 Rscript master.R \
   --trait_id "MSBM" \
-  --trait_lbf_path "data/PrC_coloc/MSMB/"\
-  --trait_sumstats_path "data/PrC_coloc/MSMB/MSMB_P08118_OID20275_rs10993994.rsids.csv" \
+  --trait_lbf_path "data/PrC/MSMB/"\
+  --trait_sumstats_path "data/PrC/MSMB/MSMB_P08118_OID20275_rs10993994.rsids.csv" \
   --N_trait 35000 \
   --trait_chr_col "CHROM" \
   --trait_pos_col "GENPOS" \
@@ -30,9 +30,9 @@ Rscript master.R \
   --trait_eaf_col "A1FREQ" \
   --trait_effect_allele_col "ALLELE1" \
   --trait_other_allele_col "ALLELE0" \
-  --out_id "Prostate cancer" \
-  --out_lbf_dir_path "data/PrC_coloc/prostate_cancer_lbf" \
-  --out_sumstats_path "data/PrC_coloc/ELLIPSE_V2_META_EUROPEAN_Results_012121.txt" \
+  --out_id "PrC" \
+  --out_lbf_dir_path "data/PrC/prostate_cancer_lbf" \
+  --out_sumstats_path "data/PrC/ELLIPSE_V2_META_EUROPEAN_Results_012121.txt" \
   --N_out 178000 \
   --out_type "cc" \
   --out_sd 0.48 \
@@ -45,3 +45,5 @@ Rscript master.R \
   --out_eaf_col "EAF_Control"\
   --out_effect_allele_col "Allele_1" \
   --out_other_allele_col "Allele_2" \
+
+  
