@@ -26,7 +26,7 @@ all_coloc <- list()
 
 for (chr_dir in chr_dirs) {
   
-  print(paste("Processing", chr_dir))
+  cat("Processing", chr_dir, "\n")
   # Get chromosome number from directory name
   chr <- sub(".*chr_(\\d+)", "\\1", chr_dir)
   
@@ -46,7 +46,8 @@ for (chr_dir in chr_dirs) {
       res <- readRDS(file)
       
       # Extract coloc results and add identifiers
-      coloc_df <- res$coloc %>% dplyr::select(-c(!!sym(paste0("hit_", trait_id))))
+      coloc_df <- res$coloc %>% dplyr::select(-c(!!sym(paste0("hit_", trait_id)))) %>%
+        rename(idx_trait = !!sym(paste0("idx_", trait_id)))
       coloc_df$gene <- trait_id
       coloc_df$chromosome <- chr
       
@@ -64,3 +65,4 @@ output_path <- file.path(respath, "combined_coloc_results.rds")
 saveRDS(combined_coloc, output_path)
 
 cat("Combined coloc results saved to:", output_path, "\n")
+

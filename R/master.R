@@ -139,6 +139,8 @@ if (!dir.exists(args$respath)) {
 # Extract LBF for trait
 ################################################################################
 
+cat("Processing trait", args$trait_id, "\n")
+cat("\n")
 
 
 if (args$is_trait_eqtl_cat){
@@ -156,6 +158,7 @@ if (args$is_trait_eqtl_cat){
                                 snp_col = args$trait_snp_col,
                                 chr_col = args$trait_chr_col,
                                 pos_col = args$trait_pos_col)
+      cat("Trait lifted to hg38.\n")
     }
   }
   
@@ -173,20 +176,28 @@ if (args$is_trait_eqtl_cat){
   )
   }
 
+cat("Corresponding region: chr", 
+    as.character(unique(trait$chr)), ":",
+    as.character(min(trait$pos)), "-",
+    as.character(max(trait$pos)), "\n")
+
+
 trait <- finemap.wrapper(out = trait, out_lbf_dir_path = args$trait_lbf_path, 
                          N_out = args$N_trait, out_type = args$trait_type, out_sd = args$trait_sd,
                          plink_path = args$plink_path,
                          bfile_path = args$bfile_path,
                          temp_dir_path = args$temp_dir_path)
 
-print(paste0(
-  "chr", as.character(unique(trait$chr)), ":",
-  as.character(min(trait$pos)), "-",
-  as.character(max(trait$pos))))
+cat("Trait processed.\n")
+cat("\n")
 
 ################################################################################
 # Process outcome data
 ################################################################################
+
+
+cat("Processing outcome", args$out_id, "\n")
+cat("\n")
 
 
 if(args$is_out_eqtl_cat){
@@ -208,13 +219,12 @@ if(args$is_out_eqtl_cat){
                                   snp_col = args$out_snp_col,
                                   chr_col = args$out_chr_col,
                                   pos_col = args$out_pos_col)
+      cat("Outcome lifted to hg38.\n")
     }
   }
 
   out <- out_raw %>% filter((!!sym(args$out_chr_col) == unique(trait$chr))&(between(!!sym(args$out_pos_col), min(trait$pos), max(trait$pos))))
   rm(out_raw)
-  
-  print(nrow(out))
   
   out <- format_data(data.frame(out),
                      chr_col = args$out_chr_col,
@@ -236,7 +246,8 @@ out <- finemap.wrapper(out, args$out_lbf_dir_path, args$N_out, args$out_type, ar
                        bfile_path = args$bfile_path,
                        temp_dir_path = args$temp_dir_path)
 
-
+cat("Outcome processed.\n")
+cat("\n")
 
 ################################################################################
 # Run coloc based on  (SuSiE and vanilla)
@@ -244,6 +255,9 @@ out <- finemap.wrapper(out, args$out_lbf_dir_path, args$N_out, args$out_type, ar
 
 
 res_coloc <- coloc.wrapper(trait, out, args$trait_id, args$out_id)
+
+cat("Colocalisation performed.\n")
+cat("\n")
 
 
 ################################################################################
@@ -269,13 +283,16 @@ resfile <- paste0(args$respath, "/fullres_",
                   str_replace(args$out_id, " ", "_"), ".rds")
 saveRDS(res, resfile)
 
+cat("Results written to", resfile, "\n")
+
 
 ################################################################################
 # ZZ and locus plot
 ################################################################################
 
 
-plots <- plot.wrapper(trait, out, res_coloc, res_mr, args$trait_id, args$out_id, args$out_type,
+plots <- plot.wrapper(trait, out, res_coloc, res_mr, 
+                      args$trait_id, args$out_id, args$out_type,
                       plink_path = args$plink_path,
                       bfile_path = args$bfile_path,
                       temp_dir_path = args$temp_dir_path)
@@ -285,6 +302,7 @@ plotfile <- paste0(args$respath, "/plots_",
 ggsave(plotfile, plots, dpi = 300, width = 15, height = 10)
 
 
+cat("Plots written to", plotfile, "\n")
 
 
 

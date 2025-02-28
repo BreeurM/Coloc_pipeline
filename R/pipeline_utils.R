@@ -212,118 +212,6 @@ format_data <- function(dat, header = TRUE, snp_col = "SNP",
 }
 
 
-#' Infers the genome build of the summary statistics file (GRCh37 or GRCh38)
-#' from the data. Uses SNP (RSID) & CHR & BP to get genome build.
-#'
-#' @param data data table/data frame obj of the summary statistics file for
-#' the GWAS ,or file path to summary statistics file.
-#' @param nThread Number of threads to use for parallel processes.
-#' @param sampled_snps Downsample the number of SNPs used when inferring genome
-#' build to save time.
-#' @param standardise_headers Run
-#' @param standardise_headers Run
-#' \code{standardise_data_column_headers_crossplatform}.
-#' @param mapping_file \pkg{Mungedata} has a pre-defined
-#' column-name mapping file
-#' which should cover the most common column headers and their interpretations.
-#' However, if a column header that is in your file is missing of the mapping we
-#' give is incorrect you can supply your own mapping file. Must be a 2 column
-#' dataframe with column names "Uncorrected" and "Corrected". See
-#' \code{data(dataColHeaders)} for default mapping and necessary format.
-#' @param dbSNP version of dbSNP to be used (144 or 155). Default is 155.
-#' @param header_only Instead of reading in the entire \code{data} file,
-#' only read in the first N rows where N=\code{sampled_snps}.
-#' This should help speed up cases where you have to read in \code{data}
-#' from disk each time.
-#' @param allele_match_ref Instead of returning the genome_build this will
-#' return the propotion of matches to each genome build for each allele (A1,A2).
-#' @inheritParams format_data
-#' @inheritParams get_genome_builds
-#'
-#' @return ref_genome the genome build of the data
-#' @author M.Breeur, adapted from https://rdrr.io/github/neurogenomics/MungeSumstats/src/R/get_genome_build.R
-get_genome_build <- function(data, sampled_snps = 500, dbSNP = 155) {
-  seqnames <- chr <- SNP <- pos <- NULL
-  
-  # Do some filtering first to avoid errors
-  data <- data[complete.cases(SNP, chr, pos)]
-  # also remove common incorrect formatting of SNP
-  data <- data[grepl("^rs", SNP), ]
-  data <- data[SNP != ".", ]
-  # also deal with common misformatting of CHR
-  # if chromosome col has chr prefix remove it
-  data[, chr := gsub("chr", "", chr)]
-  
-  # if removing erroneous cases leads to <min(10k,50% org dataset) will fail -
-  # NOT ENOUGH DATA TO INFER
-  nrow_clean <- nrow(data)
-  
-  # Downsample SNPs to save time
-  if ((nrow(data) > sampled_snps) && !(is.null(sampled_snps))) {
-    snps <- sample(data$SNP, sampled_snps)
-  } else { # nrow(data)<10k
-    snps <- data$SNP
-  }
-  
-  data <- data[SNP %in% snps, ]
-  
-  snp_loc_data_37 <- MungeSumstats:::load_ref_genome_data(
-    snps = snps,
-    ref_genome = "GRCH37",
-    dbSNP = dbSNP
-  )
-  snp_loc_data_38 <- MungeSumstats:::load_ref_genome_data(
-    snps = snps,
-    ref_genome = "GRCH38",
-    dbSNP = dbSNP
-  )
-  # convert CHR filed in ref genomes to character not factor
-  snp_loc_data_37[, seqnames := as.character(seqnames)]
-  snp_loc_data_38[, seqnames := as.character(seqnames)]
-  # convert CHR filed in data to character if not already
-  data[, chr := as.character(chr)]
-  # Now check which genome build has more matches to data
-  num_37 <-
-    nrow(snp_loc_data_37[data, ,
-                         on = c("SNP" = "SNP", "pos" = "pos", "seqnames" = "chr"),
-                         nomatch = FALSE
-    ])
-  num_38 <-
-    nrow(snp_loc_data_38[data, ,
-                         on = c("SNP" = "SNP", "pos" = "pos", "seqnames" = "chr"),
-                         nomatch = FALSE
-    ])
-  # if no matches throw error
-  if (num_37 == 0 && num_38 == 0) {
-    msg_err <-
-      paste0(
-        "No matches found in either reference genome for your ",
-        "SNPs.\nPlease check their formatting (SNP, CHR and BP",
-        " columns) or supply the genome build."
-      )
-    stop(msg_err)
-  }
-  if (num_37 > num_38) {
-    ref_gen_num <- num_37
-    ref_genome <- "GRCH37"
-  } else {
-    ref_gen_num <- num_38
-    ref_genome <- "GRCH38"
-  }
-  
-  message("Inferred genome build: ", ref_genome)
-  # add a warning if low proportion of matches found
-  msg <- paste0(
-    "WARNING: Less than 10% of your sampled SNPs matched that of ",
-    "either reference genome, this may question the quality of ",
-    "your summary statistics file."
-  )
-  if (ref_gen_num / length(snps) < 0.1) {
-    message(msg)
-  }
-  return(ref_genome)
-}
-
 
 
 #' Infer Genome Build from Input Data by Comparing to GRCh38 Reference
@@ -388,7 +276,7 @@ get_genome_build_local <- function(data, sampled_snps = 500, path_to_38,
     ref_genome <- "GRCH37"
   }
   
-  message("Inferred genome build: ", ref_genome)
+  cat("Inferred genome build:", ref_genome, "\n")
   
   # Optional low-match warning (currently commented out)
   # if (ref_gen_num/length(snps) < 0.1) {
@@ -949,13 +837,13 @@ finemap_susie <- function(exp_data, N_exp, exp_type, exp_sd = 1,
   
   # Iteratively run SuSiE until convergence or maximum iterations are reached
   while (!converged) {
-    message("Running max iterations: ", max_iter)
+    cat("Running max iterations:", max_iter, "\n")
     susie.res <- do.call(
       susie_rss,
       c(list(z = z, R = LD, max_iter = max_iter), susie_args)
     )
     converged <- susie.res$converged
-    message("\tConverged: ", converged)
+    cat("Converged:", converged, "\n")
     if (!converged && repeat_until_convergence == FALSE) {
       stop("susie_rss() did not converge in ", max_iter, " iterations. Try running with run_until_convergence=TRUE")
     }
@@ -1083,7 +971,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
     return(any(required_cols %in% colnames(df)))
   }
   if (lbf_in_dataframe(out)) {
-    message("BF are already in the dataset.")
+    cat("BF are already in the dataset.", "\n")
     return(out)
   } else {
     if (!is.null(trait)) {
@@ -1096,7 +984,6 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
         as.character(min(trait$pos)), "-",
         as.character(max(trait$pos))
       )
-      print(region)
       region_utils <- region_utils(region, lead_pos, out_lbf_dir_path)
     } else {
       lead_pos <- out %>%
@@ -1112,7 +999,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
     }
     
     if (region_utils$is_pos_covered) {
-      message(paste0("Region already fine-mapped. Loading the BFs from ", out_lbf_dir_path))
+      cat("Region already fine-mapped. Loading the BFs from", out_lbf_dir_path, "\n")
       out_trait_susie <- NULL
       out_lbf <- readRDS(paste0(
         out_lbf_dir_path, "/lbf_chr",
@@ -1124,7 +1011,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
         ".rds"
       ))
     } else {
-      message("Region not covered. Computing the BFs...")
+      cat("Region not covered. Computing the BFs...", "\n")
       
       ## Find out if anything passes the conventional significance threshold
       
@@ -1174,7 +1061,7 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
           as.character(region_utils$region$pos_high), ".rds"
         ))
       } else {
-        message("No variant crosses the significance threshold. Returning BF = 0")
+        cat("No variant crosses the significance threshold. Returning BF = 0", "\n")
         out_trait_susie <- NULL
         
         out_lbf <- as.data.frame(matrix(-5, nrow = nrow(out), ncol = 10)) %>%
@@ -1280,6 +1167,7 @@ coloc.wrapper <- function(trait1, trait2, trait1_name = "exposure", trait2_name 
 mr.wrapper <- function(trait, out, N_out, res_coloc, trait_name = "exposure", out_name = "outcome") {
   colocalised <- (nrow(res_coloc %>% filter(PP.H4.abf > 0.5)) > 0)
   if (colocalised) {
+    cat(nrow(res_coloc %>% filter(PP.H4.abf > 0.5)), "PP4s were higher than 0.5, running MR.\n")
     trait$pheno <- trait_name
     trait_mr <- TwoSampleMR::format_data(as.data.frame(trait), phenotype_col = "pheno") %>%
       filter(pval.exposure < 1e-5)
@@ -1299,6 +1187,7 @@ mr.wrapper <- function(trait, out, N_out, res_coloc, trait_name = "exposure", ou
                            trait %>% dplyr::select(c(SNP, variant)),
                            on = "SNP")
   } else {
+    cat("No variant colocalised, skipping MR.\n")
     res_mr_single <- NULL
   }
   
@@ -1691,11 +1580,10 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
   # Define plot window
   lead_pos <- trait %>%
     filter(abs(z) == max(abs(z), na.rm = TRUE)) %>%
-    pull(pos) %>%
-    mean()
+    pull(pos)
   
-  required_start <- lead_pos - 500000
-  required_end <- lead_pos + 500000
+  required_start <- min(lead_pos) - 500000
+  required_end <- max(lead_pos) + 500000
   
   # Extract LD matrix
   SNP_list <- trait$SNP[between(trait$pos, required_start, required_end)]
@@ -1707,10 +1595,6 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
                                       temp_dir_path = temp_dir_path
   )
   
-  ## Extract lead snp from trait
-  
-  lead_snp <- unique(trait$SNP[which.min(abs(trait$pos - lead_pos))])
-  
   ## Flip z scores if needed, according to LD_mat
   
   harm_dat <- merge(
@@ -1718,6 +1602,8 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
     align_to_LD(out, LD_matrix),
     by = c("variant", "SNP")
   )
+  
+  lead_snp <- unique(harm_dat$SNP[which.max(abs(harm_dat$z.x))])
   
   ## Make locus and zz plots, store them in list
   
@@ -1766,3 +1652,136 @@ plot.wrapper <- function(trait, out, res_coloc, res_mr, trait_name = "exposure",
   
   return(plot_list)
 }
+
+
+
+################################################################################
+# Misc result functions
+################################################################################
+
+
+#' Parse sbatch log file for pipeline metrics
+#'
+#' Extracts key information from BMRC-style sbatch log files containing genetic analysis pipeline metrics.
+#'
+#' @param filepath Path to the .out log file to be parsed (character string)
+#'
+#' @return A data frame with one row containing the following columns:
+#' \describe{
+#'   \item{trait_id}{Character. The trait identifier extracted from the log header}
+#'   \item{chr}{Character. Chromosome number where the trait is located}
+#'   \item{start_time}{POSIXct. Job start time parsed from log header}
+#'   \item{end_time}{POSIXct. Job completion time parsed from log footer}
+#'   \item{time_elapsed}{Numeric. Total runtime in seconds (end_time - start_time)}
+#'   \item{susie_ran}{Logical. TRUE if SuSiE analysis was performed}
+#'   \item{susie_converged}{Logical. SuSiE convergence status (TRUE/FALSE/NA if not run)}
+#'   \item{susie_time}{Numeric. SuSiE runtime in seconds (if run, NA otherwise)}
+#'   \item{mr_ran}{Logical. TRUE if Mendelian Randomization was performed}
+#' }
+#'
+#' @note
+#' The function expects log files in the specific format shown in the example. Key lines must contain:
+#' - "Started at: " and "Finished at: " timestamps in GMT
+#' - "Processing Study: " line with trait and chromosome information
+#' - Standard SuSiE/MR status lines such as output by the wrapper functions
+#' **Move the cat messages from master to wrappers if possible**
+#'
+#' @export
+parse_sbatch_log <- function(filepath) {
+  
+  # Read all lines from the file
+  
+  lines <- readLines(filepath)
+  
+  # Initialize variables with default values
+  
+  start_time <- end_time <- as.POSIXct(NA)
+  susie_ran <- FALSE
+  susie_converged <- NA
+  susie_time <- NA
+  mr_ran <- FALSE
+  trait_id <- chr <- NA_character_
+  
+  # Extract start and end times
+  
+  start_line <- grep("Started at: ", lines, value = TRUE)
+  if (length(start_line) > 0) {
+    start_time <- as.POSIXct(
+      sub("Started at: ", "", start_line[1]),
+      format = "%a %b %d %H:%M:%S %Z %Y",
+      tz = "GMT"
+    )
+  }
+  
+  end_line <- grep("Finished at: ", lines, value = TRUE)
+  if (length(end_line) > 0) {
+    end_time <- as.POSIXct(
+      sub("Finished at: ", "", end_line[1]),
+      format = "%a %b %d %H:%M:%S %Z %Y",
+      tz = "GMT"
+    )
+  }
+  
+  # Calculate total time elapsed
+  time_elapsed <- if (!is.na(start_time) && !is.na(end_time)) {
+    as.numeric(difftime(end_time, start_time, units = "secs"))
+  } else {
+    NA_real_
+  }
+  
+  # Check if SuSiE ran
+  susie_ran <- any(grepl("Computing the BFs...", lines))
+  
+  # Get SuSiE convergence status
+  if (susie_ran) {
+    conv_line <- grep("^Converged: +", lines, value = TRUE)
+    if (length(conv_line) > 0) {
+      susie_converged <- as.logical(
+        sub("Converged: +", "", conv_line[1]) %>% 
+          trimws() 
+      )
+    }
+  }
+  
+  # Get SuSiE runtime
+  if (susie_ran) {
+    susie_time_line <- grep("^Running SuSiE: ", lines, value = TRUE)
+    if (length(susie_time_line) > 0) {
+      susie_time <- as.numeric(
+        str_extract(susie_time_line[1], "\\d+\\.\\d+")
+      )
+    }
+  }
+  
+  # Check if MR was run
+  mr_ran <- any(grepl("running MR", lines, ignore.case = TRUE))
+  
+  # Extract trait information
+  trait_line <- grep("^Processing Study: .* Trait: ", lines, value = TRUE)
+  if (length(trait_line) > 0) {
+    trait_info <- str_match(
+      trait_line[1],
+      "Trait: ([^ ]+) .*Chromosome (\\d+)"
+    )
+    if (!is.na(trait_info[1,1])) {
+      trait_id <- trait_info[1,2]
+      chr <- as.integer(trait_info[1,3])
+    }
+  }
+  
+  # Create and return the dataframe
+  data.frame(
+    trait_id = trait_id,
+    chr = as.character(chr),
+    start_time = start_time,
+    end_time = end_time,
+    time_elapsed = time_elapsed,
+    susie_ran = susie_ran,
+    susie_converged = susie_converged,
+    susie_time = susie_time,
+    mr_ran = mr_ran,
+    stringsAsFactors = FALSE
+  )
+}
+
+
