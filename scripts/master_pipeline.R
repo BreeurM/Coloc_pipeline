@@ -30,8 +30,8 @@ workdir <- "~/Code/Coloc_pipeline" # Working directory
 path_to_utils <- "scripts/pipeline_utils.R" # Path to utility scripts
 plink_path <- "plink" # Path to plink
 bfile_path <- "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered" # Path to UKBB LD matrix
-chain_path <- "data/gen_utils/hg19ToHg38.over.chain" # Path to chain file to change genome build if needed
-rsid38_path <- "data/gen_utils/hg38_rsid_map_file.txt" # Path to map file to infer genome build if needed
+chain_path <- "N:/EPIC_genetics/hg19ToHg38.over.chain" # Path to chain file to change genome build if needed
+rsid38_path <- "N:/EPIC_genetics/hg38_rsid_map_file.txt" # Path to map file to infer genome build if needed
 temp_dir_path <- "Temp" # Temporary folder to store intermediate computations
 respath <- "results" # Path to result folder
 

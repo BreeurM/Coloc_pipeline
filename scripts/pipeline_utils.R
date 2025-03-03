@@ -1119,6 +1119,8 @@ finemap.wrapper <- function(out, out_lbf_dir_path, N_out, out_type, out_sd,
         as.character(region_utils$existing_coverage$end_position),
         ".rds"
       ))
+      
+      print(out_lbf)
     } else {
       message("Region not covered. Computing the BFs...")
       
