@@ -1,4 +1,3 @@
-
 if [ -z "$1" ]; then
   echo "ERROR: Batch ID is not provided. Usage: $0 <batch_id> "
   exit 1
@@ -71,8 +70,12 @@ for CHR_ID in {1..22}; do
             array_limit=20
         fi
         
+        mkdir -p "logs/${STUDY_ID}/${CHR_ID}"
+        
         array_job_id=$(sbatch --parsable --dependency="$array_dependency" \
             -J "${STUDY_ID: -3}_${CHR_ID}_rnc" \
+            -o "logs/${STUDY_ID}/${CHR_ID}/%x-%A_%a.out" \
+            -e "logs/${STUDY_ID}/${CHR_ID}/%x-%A_%a.err" \
             --array=1-"${total_traits}"%${array_limit} \
             bash_scripts/eqtl_rnc_study_chr.sh "${STUDY_ID}" "${CHR_ID}")
         
@@ -101,7 +104,7 @@ for STUDY_ID in $LIST_STUDIES; do
     if [ -n "$job_ids" ]; then
         dependency_list="${job_ids// /:}"
         capture=$(sbatch --parsable -J "${STUDY_ID: -3}_sweep" \
-            --dependency=afterany:"${dependency_list}" -o logs/%x_%A.out\
+            --dependency=afterany:"${dependency_list}" -o logs/${STUDY_ID}/%x_%A.out\
             --wrap="Rscript scripts/eqtl_rnc_sweep_results.R ${STUDY_ID}")
     else
         echo "No jobs found for ${STUDY_ID}, skipping sweep job"

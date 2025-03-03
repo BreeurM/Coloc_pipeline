@@ -54,7 +54,9 @@ for BATCH in {1..6}; do
     STUDY_FILE_BATCH="data/eQTL_catalogue/studies_batch_${BATCH}.txt"
     LIST_STUDIES_BATCH=$(awk '{print $1}' "$STUDY_FILE_BATCH")
     
-    timeout=$((432000 / BATCH))
+    # timeout=$((432000 / BATCH))
+    
+    timeout=864000
     
     while [[ $timeout -gt 0 ]]; do
         # Assume all files exist until proven otherwise
