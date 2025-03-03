@@ -26,24 +26,24 @@ library(TwoSampleMR)
 
 # Main arguments ---------------------------------------------------------------
 
-workdir <- "~/Code/Coloc_pipeline"
-path_to_utils <- "scripts/pipeline_utils.R"
-plink_path <- "plink"
-bfile_path <- "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered"
-chain_path <- "data/gen_utils/hg19ToHg38.over.chain"
-rsid38_path <- "data/gen_utils/hg38_rsid_map_file.txt"
-temp_dir_path <- "Temp"
-respath <- "results"
+workdir <- "~/Code/Coloc_pipeline" # Working directory
+path_to_utils <- "scripts/pipeline_utils.R" # Path to utility scripts
+plink_path <- "plink" # Path to plink
+bfile_path <- "N:/EPIC_genetics/UKBB/LD_REF_FILES/LD_REF_DAT_MAF_MAC_Filtered" # Path to UKBB LD matrix
+chain_path <- "data/gen_utils/hg19ToHg38.over.chain" # Path to chain file to change genome build if needed
+rsid38_path <- "data/gen_utils/hg38_rsid_map_file.txt" # Path to map file to infer genome build if needed
+temp_dir_path <- "Temp" # Temporary folder to store intermediate computations
+respath <- "results" # Path to result folder
 
 # Trait parameters -------------------------------------------------------------
 
 trait_id <- "MSMB"
-trait_lbf_path <- "data/PrC_coloc/MSMB"
+trait_lbf_path <- "data/PrC_coloc/MSMB" # Where the BFs computed via SuSiE will be stored/are stored
 trait_sumstats_path <- "data/PrC_coloc/MSMB/MSMB_P08118_OID20275_rs10993994.rsids.csv"
-trait_build <- 38 # or 37, or NA
+trait_build <- 38 # or 37, or NA. NA = infer genome build and lift to 38 if necessary
 N_trait <- 35000
-trait_type <- "quant"
-trait_sd <- 1
+trait_type <- "quant" # Or "cc" if case-control study
+trait_sd <- 1 # trait strandard deviation if "quant", proportion of cases if "cc"
 # Trait column mappings
 trait_chr_col <- "CHROM" # Trait chromosome column name
 trait_pos_col <- "GENPOS" # Trait position column name
@@ -111,7 +111,7 @@ if (!dir.exists(respath)) {
 
 
 ################################################################################
-# Extract LBF for trait
+# Process trait
 ################################################################################
 
 cat("Processing trait", trait_id, "\n")
@@ -121,6 +121,7 @@ cat("\n")
 trait <- fread(trait_sumstats_path)
 
 if (is.na(trait_build)) {
+  # Genome build unknown -> needs to be inferred
   build <- get_genome_build_local(trait,
     sampled_snps = 100, path_to_38 = rsid38_path,
     snp_col = trait_snp_col,
@@ -131,6 +132,7 @@ if (is.na(trait_build)) {
 }
 
 if (trait_build == 37) {
+  # Lift coordinates to hg38 if needed
   trait <- lift_coordinates(trait, chain_path,
     snp_col = trait_snp_col,
     chr_col = trait_chr_col,
@@ -151,7 +153,7 @@ trait <- format_data(data.frame(trait),
   eaf_col = trait_eaf_col,
   effect_allele_col = trait_effect_allele_col,
   other_allele_col = trait_other_allele_col
-)
+) # Standardise the column names
 
 
 trait <- finemap.wrapper(
@@ -160,14 +162,14 @@ trait <- finemap.wrapper(
   plink_path = plink_path,
   bfile_path = bfile_path,
   temp_dir_path = temp_dir_path
-)
+) # Compute?Load BF
 
 cat("Trait processed.\n")
 cat("\n")
 
 
 ################################################################################
-# Process outcome data
+# Process outcome
 ################################################################################
 
 
